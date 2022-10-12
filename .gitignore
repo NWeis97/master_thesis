@@ -78,6 +78,20 @@ target/
 # exclude data from source control by default
 /data/
 
+# exclude logs
+/logs/
+/wandb/
+/config_hpc/
+
+# exclude models
+/models/
+
+# exclude reports
+/reports/
+
+# exclude init.sh file (wandb login is included)
+init.sh
+
 # Mac OS-specific storage files
 .DS_Store
 
