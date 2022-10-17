@@ -50,29 +50,36 @@ def main(args):
                'ECE': ECE,
                'CECE': CECE})
     
-    wandb.Table(dataframe=pd.DataFrame(aP_df))
-    wandb.Table(dataframe=pd.DataFrame(acc_df))
-    wandb.Table(dataframe=pd.DataFrame(CECE_df))
+    # Log class specific metrics
+    class_metrics = pd.DataFrame({'Average precision': aP_df,
+                                  'Accuracy': acc_df,
+                                  'Class Expected Calibration Error': CECE_df},
+                                 index=aP_df.index).reset_index()
+    wandb.log({'Class Metrics': wandb.Table(dataframe=class_metrics)})
     
-    plot = visualize_embedding_space(classifier)
+    # Log illustration of embedding space with classes
+    fig_tsne_test, fig_pca_test = visualize_embedding_space(classifier)
+    wandb.log({'fig_tsne_test': wandb.Image(fig_tsne_test),
+               'fig_pca_test' : wandb.Image(fig_pca_test)})
+    
 
 
 
 def visualize_embedding_space(classifier: ImageClassifier):
     # Extract embeddings for 30 objects from same class in embedding space
     num_classes_samples = 30  
-    classes_unique = pd.sort(pd.unique(classifier.classes.numpy()))
+    classes_unique = (np.sort(pd.unique(classifier.classes)))
     classes = []
     
     means_list = classifier.means.to('cpu').numpy()
     vars_list = classifier.vars.to('cpu').numpy()
-    classes_list = classifier.classes.to('cpu').numpy()
+    classes_list = np.array(classifier.classes)
     
-    means = np.zeros(means_list.shape[0], num_classes_samples*len(classes_unique))
-    vars = np.zeros(num_classes_samples*len(classes_unique),)
+    means = np.zeros((means_list.shape[0], num_classes_samples*len(classes_unique)))
+    vars = np.zeros((num_classes_samples*len(classes_unique),))
     count = 0
     for class_ in classes_unique:
-        class_idxs = np.where(classes_list == class_)
+        class_idxs = np.where(classes_list == class_)[0]
         rand_idx_of_class = np.random.choice(class_idxs,num_classes_samples)
         for idx in rand_idx_of_class:
             means[:,count] = means_list[:,idx]
@@ -81,10 +88,11 @@ def visualize_embedding_space(classifier: ImageClassifier):
             count += 1
     
     
-    pdb.set_trace()
+    
     # print embedding space
-    fig_tsne_train, fig_pca_train = print_PCA_tSNE_plot(means,vars,classes,0,
-                                                        classifier.params['var_prior'],'test')
+    fig_tsne_test, fig_pca_test = print_PCA_tSNE_plot(means,vars,classes,0,
+                                                      classifier.params['var_prior'],'test')
+    return fig_tsne_test, fig_pca_test
     
 
 

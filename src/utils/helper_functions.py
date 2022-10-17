@@ -57,7 +57,7 @@ def print_PCA_tSNE_plot(data: np.array ,qvars: np.array, classes: list, epoch: i
         early_ex (int, optional): tSNE optional. Defaults to 12.
         init (str, optional): tSNE optional. Defaults to 'pca'.
     """
-    if (mode != 'train') & (mode != 'val'):
+    if (mode != 'train') & (mode != 'val') & (mode != 'test'):
         raise ValueError('Unknown mode!')
     
     sizes = np.array([size]*len(classes))
@@ -81,7 +81,7 @@ def print_PCA_tSNE_plot(data: np.array ,qvars: np.array, classes: list, epoch: i
 
     # tSNE plot
     fig, ax = plt.subplots(1,1,figsize=(12,7))
-    sns.scatterplot(
+    g=sns.scatterplot(
         x="tsne-2d-one", y="tsne-2d-two",
         hue="y",
         palette=sns.color_palette("hls", len(pd.unique(classes))),
@@ -91,6 +91,7 @@ def print_PCA_tSNE_plot(data: np.array ,qvars: np.array, classes: list, epoch: i
         s=size,
         ax=ax
     )
+    g.legend(loc='center left', bbox_to_anchor=(2.5, 0.5), ncol=1)
     sns.scatterplot(
         x="tsne-2d-one", y="tsne-2d-two",
         hue="y",
@@ -103,14 +104,22 @@ def print_PCA_tSNE_plot(data: np.array ,qvars: np.array, classes: list, epoch: i
     )
     ax.set_xlabel('tSNE-2d-one', fontsize=15)
     ax.set_ylabel('tSNE-2d-two', fontsize=15)
-    ax.set_title(f'tSNE epoch {epoch}', fontsize=20)
+    if mode == 'test':
+        ax.set_title(f'tSNE test', fontsize=20)
+    else:
+        ax.set_title(f'tSNE epoch {epoch}', fontsize=20)
     ax.legend(fontsize=15)
+    
+    # Move legend
+    box = ax.get_position()
+    ax.set_position([box.x0, box.y0, box.width * 0.9, box.height])  
+    ax.legend(loc='center left', bbox_to_anchor=(1.05, 0.5), ncol=1)
 
     plt.close()
     
     #PCA
     fig2, ax2 = plt.subplots(1,1,figsize=(12,7))
-    sns.scatterplot(
+    g2 = sns.scatterplot(
         x="pca-one", y="pca-two",
         hue="y",
         palette=sns.color_palette("hls", len(pd.unique(classes))),
@@ -132,8 +141,16 @@ def print_PCA_tSNE_plot(data: np.array ,qvars: np.array, classes: list, epoch: i
     )
     ax2.set_xlabel('PCA-2d-one', fontsize=15)
     ax2.set_ylabel('PCA-2d-two', fontsize=15)
-    ax2.set_title(f'PCA epoch {epoch}', fontsize=20)
+    if mode == 'test':
+        ax2.set_title(f'PCA test', fontsize=20)
+    else:
+        ax2.set_title(f'PCA epoch {epoch}', fontsize=20)
     ax2.legend(fontsize=15)
+    
+    # Move legend
+    box = ax2.get_position()
+    ax2.set_position([box.x0, box.y0, box.width * 0.9, box.height])  
+    ax2.legend(loc='center left', bbox_to_anchor=(1.05, 0.5), ncol=1)
     
     plt.close()
     return fig, fig2

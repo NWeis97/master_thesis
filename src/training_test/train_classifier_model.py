@@ -331,8 +331,7 @@ def main(config):
                                             varPrior=var_prior,
                                             kl_scale_factor=kl_scale_factor)
         lr_optim = lr_init+(lr_diff*(max(0,i+1-kl_warmup)))
-        optim = torch.optim.AdamW(net.parameters(),lr=lr_optim,
-                                  weight_decay=1e-1,)
+        optim = torch.optim.AdamW(net.parameters(), lr=lr_optim, weight_decay=1e-1,)
 
         logger.info(f'Updating margin ({margin:.2e}) and kl_scale_factor ({kl_scale_factor:.2e})')
         
