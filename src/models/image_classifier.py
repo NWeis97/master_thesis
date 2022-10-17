@@ -61,12 +61,12 @@ class ImageClassifier():
         
         # Select subset of classes (depends on the classes the model was trained on)
         self.num_classes = self.params['num_classes']
-        #self.all_class_list = ['train','cow','tvmonitor','boat','cat','person','aeroplane','bird',
-        #                       'dog','sheep','bicycle','bus','motorbike','bottle','chair',
-        #                       'diningtable','pottedplant','sofa','horse','car']
         self.all_class_list = ['train','cow','tvmonitor','boat','cat','person','aeroplane','bird',
-                               'horse','sheep','bicycle','bus','motorbike','bottle','chair',
-                               'diningtable','pottedplant','sofa','dog','car']
+                               'dog','sheep','bicycle','bus','motorbike','bottle','chair',
+                               'diningtable','pottedplant','sofa','horse','car']
+        #self.all_class_list = ['train','cow','tvmonitor','boat','cat','person','aeroplane','bird',
+        #                       'horse','sheep','bicycle','bus','motorbike','bottle','chair',
+        #                       'diningtable','pottedplant','sofa','dog','car']
         db = {self.all_class_list[i]:db[self.all_class_list[i]] for i in range(self.num_classes)}
         
         # Extract list of images
@@ -105,11 +105,6 @@ class ImageClassifier():
         # ************************************************************************
         # ******** Extract means, variance and classes for model data  ***********
         # ************************************************************************
-        # Extract list of classes
-        class_num = [[key]*len(db[key]) for key in db.keys()]
-        self.classes = []
-        [self.classes.extend(class_list) for class_list in class_num]
-        
         # Find means and variances of model data
         self.model.cuda()
         self.model.eval()
@@ -429,8 +424,8 @@ class ImageClassifier():
         probs_class = probs_df.loc[class_,:]
         probs_class_sorted = np.sort(probs_class.unique())-1e-7
         
-        precision = [1.0]
-        recall = [0.0]
+        precision = []
+        recall = []
         for i in range(len(probs_class_sorted)):
             pred_classes = probs_class >= probs_class_sorted[-(i+1)]
             TP = np.sum((pred_classes == True) & (true_classes == True))
@@ -440,9 +435,19 @@ class ImageClassifier():
             precision.append(TP/(TP+FP))
             recall.append(TP/(TP+FN))
         
-        precision.append(0.0)
-        recall.append(1.0)
-        aP = self._calc_AUC_(precision, recall)
+        precision.insert(0,precision[0])
+        recall.insert(0,0)
+        
+        prec_AUC = [np.max(precision)]
+        rec_AUC = [recall[0]]
+        prev_rec = recall[0]
+        for i in range(len(precision)-1):
+            if (precision[i+1] > np.max(precision[i+2:]+[-1])) & (prev_rec < recall[i+1]):
+                prec_AUC.append(precision[i+1])
+                rec_AUC.append(recall[i+1])
+                prev_rec = recall[i+1]
+                
+        aP = self._calc_AUC_(prec_AUC, rec_AUC)
 
         return aP, precision, recall
 
@@ -450,7 +455,7 @@ class ImageClassifier():
     def _calc_AUC_(self, precision: list, recall: list):
         AUC = 0
         for i in range(len(recall)-1):
-            AUC += (precision[i])*(recall[i+1]-recall[i])
+            AUC += (precision[i+1])*(recall[i+1]-recall[i])
             
         return AUC
 
@@ -509,8 +514,13 @@ class ImageClassifier():
         bins = np.linspace(0,1,num_bins+1)
         bins_mid = [(bins[i+1]+bins[i])/2 for i in range(len(bins)-1)]
         
+        # Init dataframes for storing accuracies of bins and number of elements in each bin
         cali_plot_df = pd.DataFrame(index = bins_mid, columns = true_classes_unique)
         cali_plot_df['All'] = np.zeros((len(bins_mid),))
+        
+        num_each_bin_df = pd.DataFrame(index = bins_mid, columns = true_classes_unique)
+        num_each_bin_df['All'] = np.zeros((len(bins_mid),))
+        
         
         # reset true classes
         true_classes_unique = pd.unique(true_classes).tolist()
@@ -519,40 +529,57 @@ class ImageClassifier():
         bins[0] += -1.e-1 
         bins[-1] += 1.e-1
         
-        # Keep track of total number of samples in each bin (for 'All')
-        tot_samples_bins = pd.Series(np.zeros((len(bins_mid),)),index=bins_mid)
-        
         for class_ in true_classes_unique:
             class_probs = probs_df.loc[class_,:]
             for i in range(len(bins_mid)):
                 class_probs_in_bin = (class_probs <= bins[i+1]) & (class_probs > bins[i])
                 class_probs_in_bin_true = true_classes[class_probs_in_bin]==class_
-                if class_probs_in_bin_true.size == 0:
-                    class_probs_in_bin_true = np.array([0])
+                if class_probs_in_bin_true.size != 0:
+                    cali_plot_df.loc[bins_mid[i],class_] = np.mean(class_probs_in_bin_true)
+                    cali_plot_df.loc[bins_mid[i],'All'] += np.sum(class_probs_in_bin_true)
+                    num_each_bin_df.loc[bins_mid[i],class_] = np.sum(class_probs_in_bin)
+                    num_each_bin_df.loc[bins_mid[i],'All'] += np.sum(class_probs_in_bin)
 
-                cali_plot_df.loc[bins_mid[i],class_] = np.mean(class_probs_in_bin_true)
-                cali_plot_df.loc[bins_mid[i],'All'] += np.sum(class_probs_in_bin_true)
-                tot_samples_bins[bins_mid[i]] += np.sum(class_probs_in_bin)
-                
-        cali_plot_df['All'] = cali_plot_df['All']/tot_samples_bins
         
+        cali_plot_df['All'] = cali_plot_df['All']/num_each_bin_df['All']
         
-        
-        return cali_plot_df#ECE, CECE, 
+        ECE = self._calc_ECE_(cali_plot_df['All'],num_each_bin_df['All'])
+        CECE, CECE_df = self._calc_CECE_(cali_plot_df,num_each_bin_df)
+
+        return cali_plot_df, ECE, CECE, CECE_df
     
-classifier = ImageClassifier('init_test','TRAIN',0)
+    
+    def _calc_ECE_(self, accuracies: pd.Series,
+                         num_samples_bins: pd.Series):
+        n = num_samples_bins.sum()
+        ECE = (num_samples_bins/n*np.abs(accuracies-accuracies.index)).sum()
+        
+        return ECE
+    
+    def _calc_CECE_(self, accuracies: pd.DataFrame,
+                          num_samples_bins: pd.DataFrame):
+        CECE_df = pd.Series(index=accuracies.columns[:-1])
+        for i in range(len(accuracies.columns)-1):
+            
+            class_ = accuracies.columns[i]
+            n = num_samples_bins[class_].sum()
+            CECE_df[class_] = ((num_samples_bins[class_]/n*
+                                np.abs(accuracies[class_]-accuracies.index)).sum())
+            
+        CECE = CECE_df.mean()
+        return CECE, CECE_df
+        
+        
+"""
+# Extract classifier model
+classifier = ImageClassifier('golden-puddle-238','TRAIN',0)
+
+# Calculate probabilities
 probs_df, true_classes = classifier.get_probability_dist_dataset('test',30,1000)
-#MaP, aP_df = classifier.calc_MaP(probs_df,true_classes)
-#acc, acc_df = classifier.calc_accuracy(probs_df,true_classes)
-cali_plot_df = classifier.calc_ECE(probs_df,true_classes)
+
+
+MaP, aP_df = classifier.calc_MaP(probs_df,true_classes)
+acc, acc_df = classifier.calc_accuracy(probs_df,true_classes)
+cali_plot_df, ECE, CECE, CECE_df = classifier.calc_ECE(probs_df,true_classes)
 pdb.set_trace()
-
-TP = sum(probs_df.idxmax(0)==true_classes)
-
-sum(probs_df.idxmax(0)==true_classes)/len(true_classes)
-pd.value_counts(np.array(true_classes)[probs_df.idxmax(0)!=true_classes])
-pd.value_counts(np.array(probs_df.idxmax(0))[probs_df.idxmax(0)!=true_classes])
-probs_df, true_classes = classifier.get_probability_dist_dataset('test',30,1000)
-
-
-
+"""

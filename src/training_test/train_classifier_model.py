@@ -4,6 +4,7 @@ import wandb
 import json
 import time
 from torchvision import transforms
+import numpy as np
 import torch
 import pdb
 import ast
@@ -29,6 +30,8 @@ def train(train_loader, model, criterion, optimizer, epoch, update_every, print_
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
+    nll_losses = AverageMeter()
+    kl_losses = AverageMeter()
 
     # switch to train mode
     model.train()
@@ -53,9 +56,11 @@ def train(train_loader, model, criterion, optimizer, epoch, update_every, print_
                 output[:, imi] = model(input[q][imi].cuda()).squeeze()
 
             # accumulate gradients for one tuple at a time
-            loss = criterion(output, target[q].cuda())
+            loss, nll_loss, kl_loss = criterion(output, target[q].cuda())
             #loss /= nq # get mean across batch
             losses.update(loss.item())
+            nll_losses.update(nll_loss.item())
+            kl_losses.update(kl_loss.item())
             loss.backward()
 
         if ((i + 1) % update_every == 0) | (i+1 == len(train_loader)):
@@ -79,7 +84,7 @@ def train(train_loader, model, criterion, optimizer, epoch, update_every, print_
                   f'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
                   f'Loss {(losses.val)*1000:.4f}e-3 ({(losses.avg)*1000:.4f}e-3)')
 
-    return losses.avg
+    return losses.avg, nll_losses.avg, kl_losses.avg
 
 
 
@@ -87,6 +92,8 @@ def validate(val_loader, model, criterion, epoch, print_freq):
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
+    nll_losses = AverageMeter()
+    kl_losses = AverageMeter()
 
     # switch to train mode
     model.eval()
@@ -108,9 +115,11 @@ def validate(val_loader, model, criterion, epoch, print_freq):
                     output[:, imi] = model(input[q][imi].cuda()).squeeze()
 
                 # accumulate gradients for one tuple at a time
-                loss = criterion(output, target[q].cuda())
+                loss, nll_loss, kl_loss = criterion(output, target[q].cuda())
                 #loss /= nq # get mean across batch
                 losses.update(loss.item())
+                nll_losses.update(nll_loss.item())
+                kl_losses.update(kl_loss.item())
                 
             # measure elapsed time
             batch_time.update(time.time() - end)
@@ -123,7 +132,7 @@ def validate(val_loader, model, criterion, epoch, print_freq):
                       f'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
                       f'Loss {(losses.val)*1000:.4f}e-3 ({(losses.avg)*1000:.4f}e-3)')
 
-    return losses.avg
+    return losses.avg, nll_losses.avg, kl_losses.avg
             
 
 
@@ -195,26 +204,29 @@ def main(config):
     
     # Make datasets
     logger.info(">> Initilizing datasets")
+    num_classes = int(dataset_conf['num_classes'])
+    nnum = int(dataset_conf['nnum'])
     ds_train = TuplesDataset_2class(mode='train', 
-                                    nnum=int(dataset_conf['nnum']), 
+                                    nnum=nnum, 
                                     qsize_class=int(dataset_conf['qsize_class']),
                                     poolsize=int(dataset_conf['poolsize']),
                                     transform=transformer_train,
                                     keep_prev_tuples=ast.literal_eval(dataset_conf['keep_prev_tuples']),
-                                    num_classes=int(dataset_conf['num_classes']))
+                                    num_classes=num_classes,
+                                    approx_similarity=ast.literal_eval(dataset_conf['approx_similarity']))
     ds_val = TuplesDataset_2class(mode='val', 
-                                  nnum=int(dataset_conf['nnum']), 
+                                  nnum=nnum, 
                                   qsize_class=int(dataset_conf['qsize_class']),
                                   poolsize=int(dataset_conf['poolsize']),
                                   transform=transformer_valid,
                                   keep_prev_tuples=False,
-                                  num_classes=int(dataset_conf['num_classes']))
+                                  num_classes=num_classes,
+                                  approx_similarity=ast.literal_eval(dataset_conf['approx_similarity']))
     
     
     # ************************************* 
     # ******** Initialize model ***********
     # *************************************
-    
     logger.info(">> Initilizing model")
     params = {'architecture':ast.literal_eval(model_conf['architecture']),
                         'fixed_backbone': ast.literal_eval(model_conf['fixed_backbone']),
@@ -226,23 +238,24 @@ def main(config):
                         'dropout': float(model_conf['dropout']),
                         'num_classes': int(dataset_conf['num_classes']),
                         'img_size': int(img_conf['img_size']),
-                        'normalize_mv' : ast.literal_eval(img_conf['normalize'])}
+                        'normalize_mv' : ast.literal_eval(img_conf['normalize']),
+                        'var_prior': float(hyper_conf['var_prior'])}
     net = init_network(params)
     net.cuda()
     
     # Save parameters to json file
-    os.makedirs(f'./models/{config_filename}',exist_ok=True)  
-    with open(f"./models/{config_filename}/run_{config_run_no}.json", "w") as outfile:
+    os.makedirs(f'./models/tmp_models/{config_filename}',exist_ok=True)  
+    with open(f"./models/tmp_models/{config_filename}/run_{config_run_no}.json", "w") as outfile:
         json.dump(params, outfile)
-    wandb.save(f'./models/{config_filename}/run_{config_run_no}.json', policy="now")
+    wandb.save(f'./models/tmp_models/{config_filename}/run_{config_run_no}.json', policy="now")
     
     # ***************************************
     # ******** Initialize loaders ***********
     # ***************************************
     # Init tuples
     logger.info(">> Initilizing tuples")
-    ds_train.create_epoch_tuples(net)
-    ds_val.create_epoch_tuples(net)
+    ds_train.create_epoch_tuples(net,nnum)
+    ds_val.create_epoch_tuples(net,nnum)
     
     train_loader = torch.utils.data.DataLoader(
             ds_train, batch_size=int(hyper_conf['batch_size']), shuffle=True,
@@ -276,12 +289,8 @@ def main(config):
     update_every = int(hyper_conf['update_every'])
     valid_margin_val = margin_val
     valid_kl_scale = kl_scale_end
+    neg_class_dist = ast.literal_eval(dataset_conf['neg_class_dist'])
     
-    # train and val losses
-    train_losses = []
-    val_losses = []
-    avg_neg_dist_train = []
-    avg_neg_dist_val = []
     
     for i in range(num_epochs):
         logger.info(f"\n\n########## Training {i+1}/{num_epochs} ##########")
@@ -290,8 +299,18 @@ def main(config):
         # ******** Training ***********
         # *****************************
         # create tuples for training
-        avg_neg_distance,qvecs,qvars,classes = train_loader.dataset.create_epoch_tuples(net)
-        avg_neg_dist_train.append(avg_neg_distance)
+        if neg_class_dist == 'free':
+            neg_class_max = nnum
+        elif neg_class_dist == 'unif_to_free': 
+            neg_class_max = int(np.ceil(nnum/num_epochs*(i+1)) + np.floor(nnum/(num_classes-1)))
+        else:
+            neg_class_max = int(1 + np.floor(nnum/(num_classes-1)))
+            
+        
+        (avg_neg_distance_train,
+         qvecs,
+         qvars,
+         classes) = train_loader.dataset.create_epoch_tuples(net,neg_class_max)
 
         # print embedding space
         fig_tsne_train, fig_pca_train = print_PCA_tSNE_plot(qvecs.to('cpu').numpy(),
@@ -306,7 +325,7 @@ def main(config):
                                             varPrior=var_prior,
                                             kl_scale_factor=kl_scale_factor)
         else:
-            margin = avg_neg_distance*margin_val
+            margin = avg_neg_distance_train*margin_val
             kl_scale_factor = kl_scale_init*kl_frac**min([i,kl_warmup-1])
             criterion = BayesianTripletLoss(margin=margin,
                                             varPrior=var_prior,
@@ -318,17 +337,19 @@ def main(config):
         logger.info(f'Updating margin ({margin:.2e}) and kl_scale_factor ({kl_scale_factor:.2e})')
         
         # train model
-        train_loss = train(train_loader,net,criterion,optim,i,
-                                  update_every, print_freq, clip)
-        train_losses.append(train_loss)
+        train_loss, nll_loss_train, kl_loss_train = train(train_loader,net,criterion,optim,i,
+                                                          update_every, print_freq, clip)
         
         
         # *******************************
         # ******** Validation ***********
         # *******************************
         # create tuples for validation
-        avg_neg_distance,qvecs,qvars,classes = val_loader.dataset.create_epoch_tuples(net)
-        avg_neg_dist_val.append(avg_neg_distance)
+        (avg_neg_distance_val,
+         qvecs,
+         qvars,
+         classes) = val_loader.dataset.create_epoch_tuples(net,neg_class_max)
+        
         
         # print embedding space
         fig_tsne_val, fig_pca_val = print_PCA_tSNE_plot(qvecs.to('cpu').numpy(),
@@ -338,8 +359,7 @@ def main(config):
         criterion = BayesianTripletLoss(margin=valid_margin_val,
                                         varPrior=var_prior,
                                         kl_scale_factor=valid_kl_scale)
-        val_loss = validate(val_loader,net,criterion,i,print_freq)
-        val_losses.append(val_loss)
+        val_loss, nll_loss_val, kl_loss_val = validate(val_loader,net,criterion,i,print_freq)
         
         
         # *******************************
@@ -360,15 +380,21 @@ def main(config):
                     "tSNE_val": wandb.Image(fig_tsne_val),
                     "PCA_val": wandb.Image(fig_pca_val),
                     "kl_scale_factor": kl_scale_factor,
-                    "lr_optim": lr_optim
+                    "lr_optim": lr_optim,
+                    "avg_dist_neg_train": avg_neg_distance_train,
+                    "avg_dist_neg_val": avg_neg_distance_val,
+                    "nll_loss_train": nll_loss_train*1000,
+                    "nll_loss_val": nll_loss_val*1000,
+                    "kl_loss_train": kl_loss_train*1000*kl_frac,
+                    "kl_loss_val": kl_loss_val*1000*kl_frac,     
                 }
             )
         
         # Save model on W&B and remove locally
         if (i+1)%save_model_freq == 0:
             logger.info('Saving the model')
-            torch.save(net.state_dict(),f'./models/{config_filename}/run_{config_run_no}.pt')
-            wandb.save(f'./models/{config_filename}/run_{config_run_no}.pt', policy="now")
+            torch.save(net.state_dict(),f'./models/tmp_models/{config_filename}/run_{config_run_no}.pt')
+            wandb.save(f'./models/tmp_models/{config_filename}/run_{config_run_no}.pt', policy="now")
             
 
         
@@ -377,9 +403,9 @@ def main(config):
     # Remove local files
     wandb_local_dir = wandb.run.dir[:-5]
     wandb.finish()
-    os.remove(f'./logs/training_test/{config_filename}/run_{config_run_no}.log')
-    os.remove(f"./models/{config_filename}/run_{config_run_no}.json")
-    os.remove(f'./models/{config_filename}/run_{config_run_no}.pt')
+    os.remove(f'./logs/training_test/train_model/{config_filename}/run_{config_run_no}.log')
+    os.remove(f'./models/tmp_models/{config_filename}/run_{config_run_no}.json')
+    os.remove(f'./models/tmp_models/{config_filename}/run_{config_run_no}.pt')
     shutil.rmtree(wandb_local_dir, ignore_errors=True)
     
     

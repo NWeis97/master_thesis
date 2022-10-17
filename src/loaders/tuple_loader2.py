@@ -33,6 +33,9 @@ class TuplesDataset_2class(data.Dataset):
                                          to be processed in one epoch (for each class)
         poolsize (int, Default:3000): Pool size for negative images re-mining
         keep_prev_tuples (bool, Default:True): Should we keep tuples from previous generation?
+        num_classes (int, Default:6): How many classes should be trained on?
+        approx_similarity (bool, Default:True): Should the similarity measure be approximative (dot
+                                                product) or exact (l2-norm)
      
      Attributes:
         images (list): List of full filenames for each image
@@ -51,7 +54,8 @@ class TuplesDataset_2class(data.Dataset):
     """
 
     def __init__(self, mode: str, nnum: int=10, qsize_class: int=20, poolsize:int =3000, 
-                 transform: transforms=None, keep_prev_tuples: bool=True, num_classes: int=6):
+                 transform: transforms=None, keep_prev_tuples: bool=True, num_classes: int=6,
+                 approx_similarity: bool=True):
 
         if not (mode == 'train' or mode == 'val'):
             raise(RuntimeError("MODE should be either train or val, passed as string"))
@@ -59,6 +63,9 @@ class TuplesDataset_2class(data.Dataset):
         # Define mode and loader
         self.mode = mode
         self.loader = image_object_loader
+        
+        # Define distance measure
+        self.approx_similarity = approx_similarity
 
         # Set paths to data
         data_root = './data/processed/'
@@ -172,7 +179,7 @@ class TuplesDataset_2class(data.Dataset):
                                      ' ' * len(tmp)))
         return fmt_str
 
-    def create_epoch_tuples(self, net):
+    def create_epoch_tuples(self, net, num_classes_per_neg):
 
         logger.info('\n>> Creating tuples for an epoch of *{}*...'.format(self.mode))
         #if self.keep_prev_tuples:
@@ -266,8 +273,14 @@ class TuplesDataset_2class(data.Dataset):
 
             logger.info('>> Searching for hard negatives...')
             # compute dot product scores and ranks on GPU
-            scores = torch.mm(poolvecs.t(), qvecs)
-            scores, ranks = torch.sort(scores, dim=0, descending=True)
+            
+            if self.approx_similarity:
+                scores = torch.mm(poolvecs.t(), qvecs)
+                scores, ranks = torch.sort(scores, dim=0, descending=True)
+            else:
+                scores = torch.cdist(poolvecs.t(),qvecs.t(),2)
+                scores, ranks = torch.sort(scores, dim=0, descending=False)
+            
             avg_ndist = torch.tensor(0).float().cuda()  # for statistics
             n_ndist = torch.tensor(0).float().cuda()  # for statistics
             # selection of negative examples
@@ -276,16 +289,13 @@ class TuplesDataset_2class(data.Dataset):
                 # do not use query class,
                 # those images are potentially positive
                 qclass = self.classes[self.qcidxs[q]]
-                num_classes_per_neg = int((1+np.floor(self.nnum/(self.num_classes-1))))
                 classes = [qclass]*num_classes_per_neg
                 nidxs = []
                 r = 0
                 while len(nidxs) < self.nnum:
                     potential = idxs2objects[ranks[r, q]]
-                    # take at most two images from the same cluster
                     num_class = []
                     [num_class.append(self.classes[potential]==classes[i]) for i in range(len(classes))]
-                    #if not self.classes[potential] in classes:
                     if sum(num_class) < num_classes_per_neg:
                         nidxs.append(potential.item())
                         classes.append(self.classes[potential])
@@ -296,7 +306,7 @@ class TuplesDataset_2class(data.Dataset):
                 self.ncidxs.append(nidxs)
             logger.info('>>>> Average negative l2-distance: {:.2f}'.format(avg_ndist/n_ndist))
             logger.info('>>>> Done\n')
-            
+
             # Add previous and current tuples
             self.qidxs = self.qcidxs.copy()
             self.pidxs = self.pcidxs.copy()

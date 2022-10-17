@@ -37,7 +37,7 @@ class AverageMeter(object):
         self.avg = self.sum / self.count
 
 
-def print_PCA_tSNE_plot(data: torch.Tensor ,qvars: torch.Tensor, classes: list, epoch: int,
+def print_PCA_tSNE_plot(data: np.array ,qvars: np.array, classes: list, epoch: int,
                         varP: float, mode: str, size: int=100, perp: int=10, n_iter: int=1000,
                         lr: int=200, early_ex: int=12, init: str='pca'):
     """This function makes a scatterplot of the embedding space of *data* with pseudo-variances
@@ -45,8 +45,8 @@ def print_PCA_tSNE_plot(data: torch.Tensor ,qvars: torch.Tensor, classes: list, 
        The classes are given by a list and epoch defines the epoch at call-time (for naming).
 
     Args:
-        data (torch.Tensor): A (out_dim-1,num_quries) tensor with embedding means
-        qvars (torch.Tensor): A (num_quries,) tensor with embedding variances
+        data (np.array): A (out_dim-1,num_quries) tensor with embedding means
+        qvars (np.array): A (num_quries,) tensor with embedding variances
         classes (list): List of classes with length *num_quries*
         epoch (int): Epoch number at call-time
         mode (str): train/val for saving-location

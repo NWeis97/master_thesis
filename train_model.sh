@@ -1,10 +1,10 @@
 #!/bin/bash
-export R=16
+export R=17
 ### NAME OF FILE
-#BSUB -J config16
+#BSUB -J config17
 ### OUTPUT AND ERROR FILE
-#BSUB -o config_hpc/config16.out
-#BSUB -e config_hpc/config16.err
+#BSUB -o config_hpc/config17.out
+#BSUB -e config_hpc/config17.err
 ### QUEUE TO BE USED
 #BSUB -q gpuv100
 ### gpu memory
@@ -25,5 +25,6 @@ export R=16
 rm config_hpc/config${R}.out
 rm config_hpc/config${R}.err
 source init.sh
+wandb online
 
 python3 src/training_test/train_classifier_model.py --config-filename=training${R}

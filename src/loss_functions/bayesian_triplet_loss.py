@@ -44,7 +44,7 @@ class BayesianTripletLoss(nn.Module):
        
         #print(f'nll:{nll}')
         #print(f'scaled kl:{self.kl_scale_factor * kl}')
-        return nll + self.kl_scale_factor * kl
+        return nll + self.kl_scale_factor * kl, nll, kl
 
 
     def __repr__(self):
