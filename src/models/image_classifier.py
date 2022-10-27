@@ -1,3 +1,4 @@
+from argparse import ArgumentTypeError
 import torch
 import logging
 import json
@@ -10,6 +11,7 @@ from src.models.image_classification_network import init_network
 import ast
 import pdb
 from os.path import exists
+from torch_scatter import scatter_mean
 
 # Load own libs
 from src.loaders.generic_loader import ObjectsFromList, image_object_loader
@@ -22,7 +24,8 @@ class ImageClassifier():
     
     def __init__(self, model: str, 
                  model_data: str, 
-                 balanced_classes: int = 0):
+                 balanced_classes: int = 0,
+                 with_OOD: bool= False):
         """Image classifier model. Has embeddings of training data and can classify and calculate
            probability disitrbution for unknown object over objects trained on.
 
@@ -39,6 +42,12 @@ class ImageClassifier():
         self.model_name = model
         self.model_data = model_data
         self.balanced_classes = balanced_classes
+        self.with_OOD = with_OOD
+        
+        if with_OOD == True:
+            logger.info('Creating classifier *with* OOD classes')
+        else:
+            logger.info('Creating classifier *without* OOD classes')
         # *****************************************
         # ******** Initialize model data **********
         # *****************************************
@@ -64,11 +73,11 @@ class ImageClassifier():
         self.all_class_list = ['train','cow','tvmonitor','boat','cat','person','aeroplane','bird',
                                'dog','sheep','bicycle','bus','motorbike','bottle','chair',
                                'diningtable','pottedplant','sofa','horse','car']
-        #self.all_class_list = ['train','cow','tvmonitor','boat','cat','person','aeroplane','bird',
-        #                       'horse','sheep','bicycle','bus','motorbike','bottle','chair',
-        #                       'diningtable','pottedplant','sofa','dog','car']
-        db = {self.all_class_list[i]:db[self.all_class_list[i]] for i in range(self.num_classes)}
         
+        # Remove we would like to no include OOD classes
+        if self.with_OOD == False:
+            db = {self.all_class_list[i]:db[self.all_class_list[i]] for i in range(self.num_classes)}
+            
         # Extract list of images
         obj_names = [[db[key][j]['img_name'] for j in range(len(db[key]))] for key in db.keys()]
         self.objects = []
@@ -105,30 +114,47 @@ class ImageClassifier():
         # ************************************************************************
         # ******** Extract means, variance and classes for model data  ***********
         # ************************************************************************
+        # Extract list of classes
+        class_num = [[key]*len(db[key]) for key in db.keys()]
+        self.classes = []
+        [self.classes.extend(class_list) for class_list in class_num]
+        
+        # Mark objects not trained on if with_OOD is true
+        if self.with_OOD == True:
+            classes_not_trained_on = self.get_classes_not_trained_on()
+            for i in range(len(self.classes)):
+                if self.classes[i] in classes_not_trained_on:
+                    self.classes[i] = self.classes[i] + '_OOD'
+        
         # Find means and variances of model data
         self.model.cuda()
         self.model.eval()
-        
-        if exists(f'./models/embeddings/{model}_{model_data}_'+
-                                        f'{str(balanced_classes)}_means.pt') == False:
+
+        file_name = (f'./models/embeddings/{model}_{model_data}_'+
+                                        f'{str(balanced_classes)}_'+
+                                        f'withOOD{self.with_OOD}_')
+        if exists(file_name+'means.pt') == False:
             self.means, self.vars, self.classes = self._extract_means_and_variances_()
-            torch.save(self.means,f'./models/embeddings/{model}_{model_data}_'+
-                                                        f'{str(balanced_classes)}_means.pt')
-            torch.save(self.vars,f'./models/embeddings/{model}_{model_data}_'+
-                                                        f'{str(balanced_classes)}_vars.pt')
-            torch.save(self.classes,f'./models/embeddings/{model}_{model_data}_'+
-                                                        f'{str(balanced_classes)}_classes.pt')
+            torch.save(self.means,file_name+'means.pt')
+            torch.save(self.vars,file_name+'vars.pt')
+            torch.save(self.classes,file_name+'classes.pt')
         else:
             logger.info('Loading already existing classifier model')
-            self.means = torch.load(f'./models/embeddings/{model}_{model_data}_'+
-                                                        f'{str(balanced_classes)}_means.pt')
-            self.vars = torch.load(f'./models/embeddings/{model}_{model_data}_'+
-                                                        f'{str(balanced_classes)}_vars.pt')
-            self.classes = torch.load(f'./models/embeddings/{model}_{model_data}_'+
-                                                        f'{str(balanced_classes)}_classes.pt')
+            self.means = torch.load(file_name+'means.pt')
+            self.vars = torch.load(file_name+'vars.pt')
+            self.classes = torch.load(file_name+'classes.pt')
         
-        
-        
+        # Split classes into list with indices of positions
+        if self.with_OOD == True:
+            self.unique_classes = np.sort(np.unique(self.classes))
+        else:
+            self.unique_classes = self.get_classes_trained_on()
+            
+        self.classes_idxs = {self.unique_classes[i]:[] for i in range(len(self.unique_classes))}
+        for i, class_ in enumerate(self.classes):
+            self.classes_idxs[class_].append(i)
+        self.num_samples_classes = ({class_: len(self.classes_idxs[class_]) for class_ in 
+                                               self.classes_idxs.keys()})
 
     def __repr__(self):
         tmpstr = super(ImageClassifier, self).__repr__()[:-1]
@@ -193,12 +219,12 @@ class ImageClassifier():
             )
 
         logger.info("Extract means and variance for model data")
-       
+
         # extract means and variances 
         if self.balanced_classes < 1:
             logger.info("No balancing of classes")
             qvecs = torch.zeros(self.params['dim_out']-1, len(self.objects)).cuda()
-            qvars = torch.zeros(len(self.objects),)
+            qvars = torch.zeros(len(self.objects),).cuda()
         
             for i, input in enumerate(loader):
                 output = self.model(input.cuda()).data.squeeze()
@@ -215,7 +241,7 @@ class ImageClassifier():
             dist_of_classes = pd.value_counts(self.classes)
             num_samples = len(dist_of_classes)*self.balanced_classes
             qvecs = torch.zeros(self.params['dim_out']-1, num_samples).cuda()
-            qvars = torch.zeros(num_samples,)
+            qvars = torch.zeros(num_samples,).cuda()
             
             # for track-keeping
             classes_count = {dist_of_classes.index[i]:0 for i in range(len(dist_of_classes))}
@@ -253,7 +279,7 @@ class ImageClassifier():
         return qvecs, qvars, classes
 
     def get_classes_trained_on(self):
-        return np.unique(self.classes).tolist()
+        return np.sort(np.array(self.all_class_list)[:self.num_classes]).tolist()
     
     def get_classes_not_trained_on(self):
         trained_on = self.get_classes_trained_on()
@@ -278,13 +304,14 @@ class ImageClassifier():
         
         return mean_emb, var_emb
     
-    
+
     def get_probability_dist(self, img_name: str, 
                                    bbox: list, 
                                    num_NN: int = 100, 
-                                   num_MC: int = 10000):
+                                   num_MC: int = 10000,
+                                   method: str = 'min_dist_NN'):
         """Get probability distribution over model classes for an input image (defined by path
-           and bounding box). The probability disitrbution will be based on num_NN nearest neighbors
+           and bounding box). The probability distribution will be based on num_NN nearest neighbors
            in the embedding space. For each nearest neighbour the probability that it is the
            closest object in the embedding space will be calculated (based on num_MC samples), and
            then accumulated on class level. 
@@ -296,45 +323,37 @@ class ImageClassifier():
             bbox (list): bbox of object on image
             num_NN (int, optional): Number of nearest objects to base probs on. Defaults to 100.
             num_MC (int, optional): Number of Monte Carlo samples. Defaults to 10000.
+            method (str. optional): See description under function for get_probability_dist_dataset
         """
         # Get embeddings
         mean_emb, var_emb = self.get_embedding(img_name,bbox)
         
-        # Find nearest neighbours
         dist = (torch.pow(self.means-mean_emb[None,:].T+1e-6, 2).sum(dim=0).sqrt())
-        scores, ranks = torch.sort(dist, dim=0, descending=False)
-        scores = scores[:num_NN]
-        ranks = ranks[:num_NN]
-        
-        means_NN = self.means[:,ranks].cuda()
-        vars_NN = self.vars[ranks].cuda()
-        classes_NN = [self.classes[i] for i in ranks]
-        
-        # Calc scaled non-centered chi-sq dists parameters
-        scaling = var_emb + vars_NN
-        delta = (mean_emb - means_NN.T).T
-        nonc = (scaling**(-1)*torch.diag(torch.matmul(delta.T,delta))).cpu().numpy()
-        df = len(mean_emb)
-        
-        # Simulate distances for all NN
-        dist_to_NN = torch.zeros(num_NN, num_MC).cuda()
-        for i in range(num_NN):
-            dist_to_NN[i,:] = torch.Tensor(noncentral_chisquare(df,nonc[i],num_MC)).cuda()
-        
-        # Find smallest distance to image
-        _, indx_min = torch.min(dist_to_NN,0)
-        indx_class, counts = indx_min.unique(return_counts=True)
-        counts = counts.cpu()/num_MC
-        probs = {key:0 for key in np.unique(self.classes)}
-        for i in range(len(counts)):
-            probs[classes_NN[indx_class[i].item()]]+=counts[i].item()
+        _, ranks = torch.sort(dist, dim=0, descending=False)
+        if method == 'min_dist_NN':
+            probs = self._min_dist_NN_(ranks, mean_emb, var_emb, num_NN, num_MC)
+        elif method == 'avg_dist_rand':
+            probs = self._avg_dist_rand_(mean_emb, var_emb, num_NN, num_MC)
+        elif method == 'avg_dist_NN_pr_class':
+            probs = self._avg_dist_NN_pr_class_(ranks, mean_emb, var_emb, num_NN, num_MC)
+        elif method == 'min_dist_NN_pr_class':
+            probs = self._min_dist_NN_pr_class_(ranks, mean_emb, var_emb, num_NN, num_MC)
+        elif method =='avg_dist_NN_cap_class_NN':    
+            probs = self._avg_dist_NN_cap_class_NN_(ranks, mean_emb, var_emb, num_NN, num_MC)
+        elif method =='min_dist_NN_cap_class_NN':    
+            probs = self._min_dist_NN_cap_class_NN_(ranks, mean_emb, var_emb, num_NN, num_MC)
+        elif method =='min_dist_NN_with_min_dist_rand':
+            probs = self._min_dist_NN_with_min_dist_rand_(ranks, mean_emb, var_emb, num_NN, num_MC)
+        else:
+            raise ValueError('Method does not exist')
 
-        return probs
+        return probs, mean_emb, var_emb
         
         
     def get_probability_dist_dataset(self, test_dataset: str = 'test',
                                            num_NN: int = 100, 
-                                           num_MC: int = 10000):
+                                           num_MC: int = 10000,
+                                           method: str = 'min_dist_NN'):
         """Calculates the probability distributiuon over classes trained on for a set of images
            defined by 'test_dataset'. Name of 'test_dataset' should be present in data/processed/.
 
@@ -342,6 +361,20 @@ class ImageClassifier():
             test_dataset (str, optional): Name of test dataset (json file). Defaults to 'test'.
             num_NN (int, optional): Number of nearest objects to base probs on. Defaults to 100.
             num_MC (int, optional): Number of Monte Carlo samples. Defaults to 10000.
+            method (str, optional): Determines how the probabilities are calculated. Choose between
+                                    min_dist_NN: Based on num_NN nearest neighbours, sample num_MC
+                                                 distances from anchor to NN's and note the class
+                                                 with smallest distance. Accumulate on class level.
+                                                 Propertion of class noted approximates probability
+                                    min_dist_rand: For each num_MC select at random one object from
+                                                   each class, sample distance to anchor and note
+                                                   the class with smallest distance. Accumulate on 
+                                                   class level. Propertion of class noted 
+                                                   approximates probability 
+                                    score_based: Based on num_NN nearest neighbours from each class, 
+                                                 (calculated as mean distance to anchor), sort 
+                                                 objects from closest to furthest away. Score each 
+                                                 object based on position. 
 
         Returns:
             probs_df (pd.DataFrame): Pandas dataframe containing the probability dist over classes
@@ -349,61 +382,122 @@ class ImageClassifier():
             classes (list):          List of true classes 
         """
         # Extract test dataset
-        db_root = os.path.join(self.data_root, f'{test_dataset}.json')
-        f = open(db_root)
-        db_test = json.load(f)
-        f.close()
-        
-        # Extract list of images
-        objects_list = [[db_test[j]['img_name']]*len(db_test[j]['classes']) 
-                                                                for j in range(len(db_test))]
-        objects = []
-        [objects.extend(obj) for obj in objects_list]
-        
-        # Extract list of bbox
-        bbox_list = [db_test[j]['bbox'] for j in range(len(db_test))]
-        bboxs = []
-        [bboxs.extend(bbox) for bbox in bbox_list]
-        
-        # Extract list of classes
-        class_num = [db_test[j]['classes'] for j in range(len(db_test))]
-        classes = []
-        [classes.extend(class_list) for class_list in class_num]
-        
-        # Remove objects not trained on
-        classes_not_trained_on = self.get_classes_not_trained_on()
-        idx_trained_on = [i for i in range(len(classes)) if classes[i] 
-                                                                not in classes_not_trained_on]
-        objects = [objects[i] for i in idx_trained_on]
-        bboxs = [bboxs[i] for i in idx_trained_on]
-        classes = [classes[i] for i in idx_trained_on]
+        objects, bboxs, classes = self._extract_test_dataset_(test_dataset)
         
         # For storing probabilities
-        if exists(f'./reports/probability_distributions/'+
-                        f'{self.model_name}_{self.model_data}_'+
-                        f'{self.balanced_classes}_numNN{num_NN}_numMC{num_MC}.csv') == False:
+        file_name = (f'{self.model_name}_{self.model_data}_'+
+                        f'{self.balanced_classes}_numNN{num_NN}_'+
+                        f'numMC{num_MC}_{method}_{test_dataset}_'+
+                        f'withOOD{self.with_OOD}')
+        file_name_probs = f'./reports/probability_distributions/' + file_name + '.csv'
+        file_name_embs = f'./reports/embeddings_test/' + file_name
+        if exists(file_name_probs) == False:
             logger.info('Extracting probability distributions')
-            probs_df = pd.DataFrame(np.zeros((len(self.get_classes_trained_on()),len(classes))),
+            probs_df = pd.DataFrame(np.zeros((len(self.unique_classes),len(classes))),
                                     columns = [i for i in range(len(classes))],
-                                    index = self.get_classes_trained_on())
+                                    index = self.unique_classes)
+            
+            # For storing mean_emb and var_emb
+            mean_embs = torch.zeros(self.params['dim_out']-1, len(classes)).cuda()
+            var_embs = torch.zeros(len(classes),).cuda()
             for i in range(len(classes)):
-                probs = self.get_probability_dist(objects[i],bboxs[i],num_NN,num_MC)
+                probs, mean_emb, var_emb = self.get_probability_dist(objects[i],
+                                                                     bboxs[i],
+                                                                     num_NN,
+                                                                     num_MC,
+                                                                     method)
                 probs_df[i] = np.round(np.array(list(probs.values())),int(np.log10(num_MC)+1))
+                mean_embs[:,i] = mean_emb
+                var_embs[i] = var_emb
                 
                 if (i+1) % 100 == 0:
                     logger.info('>>>> {}/{} done... '.format(i+1, len(classes)))
                     
             # Save dataframe to reports (for later use)
-            probs_df.to_csv(f'./reports/probability_distributions/'+
-                            f'{self.model_name}_{self.model_data}_'+
-                            f'{self.balanced_classes}_numNN{num_NN}_numMC{num_MC}.csv')
+            probs_df.to_csv(file_name_probs)
+            torch.save(mean_embs, file_name_embs + '_means.pt')
+            torch.save(var_embs, file_name_embs + '_vars.pt')
         else:
             logger.info('Loading existing probability distribution')
-            probs_df = pd.read_csv(f'./reports/probability_distributions/'+
-                            f'{self.model_name}_{self.model_data}_'+
-                            f'{self.balanced_classes}_numNN{num_NN}_numMC{num_MC}.csv',index_col=0)
+            probs_df = pd.read_csv(file_name_probs,index_col=0)
         
-        return probs_df, classes
+        return probs_df, objects, bboxs, classes
+    
+    
+    
+    def get_embeddings_of_dataset(self, test_dataset: str = 'test',
+                                           num_NN: int = 100, 
+                                           num_MC: int = 10000,
+                                           method: str = 'min_dist_NN'):
+        file_name = (f'{self.model_name}_{self.model_data}_'+
+                        f'{self.balanced_classes}_numNN{num_NN}_'+
+                        f'numMC{num_MC}_{method}_{test_dataset}_'+
+                        f'withOOD{self.with_OOD}')
+        file_name_embs = f'./reports/embeddings_test/' + file_name
+        if exists(file_name_embs + '_means.pt'):
+            means = torch.load(file_name_embs + '_means.pt')
+            vars = torch.load(file_name_embs + '_vars.pt')
+        else:
+            raise RuntimeError('You have to call "get_probability_dist_dataset" before you can get'+
+                               ' embeddings!')
+    
+        return means, vars
+    
+
+    
+    def _extract_test_dataset_(self, test_dataset: str = 'test'):
+        # Extract test dataset
+        db_root = os.path.join(self.data_root, f'{test_dataset}.json')
+        f = open(db_root)
+        db_test = json.load(f)
+        f.close()
+        
+        if test_dataset == 'test':
+            # Extract list of images
+            objects_list = [[db_test[j]['img_name']]*len(db_test[j]['classes']) 
+                                                                    for j in range(len(db_test))]
+            objects = []
+            [objects.extend(obj) for obj in objects_list]
+            
+            # Extract list of bbox
+            bbox_list = [db_test[j]['bbox'] for j in range(len(db_test))]
+            bboxs = []
+            [bboxs.extend(bbox) for bbox in bbox_list]
+            
+            # Extract list of classes
+            class_num = [db_test[j]['classes'] for j in range(len(db_test))]
+            classes = []
+            [classes.extend(class_list) for class_list in class_num]
+        else:
+            # Extract list of images
+            obj_names = [[db_test[key][j]['img_name'] for j in range(len(db_test[key]))] for key in db_test.keys()]
+            objects = []
+            [objects.extend(image_list) for image_list in obj_names]
+
+            # Extract list of bbox
+            bbox_list = [[db_test[key][j]['bbox'] for j in range(len(db_test[key]))] for key in db_test.keys()]
+            bboxs = []
+            [bboxs.extend(bbox) for bbox in bbox_list]
+            
+            # Extract list of classes
+            class_num = [[key]*len(db_test[key]) for key in db_test.keys()]
+            classes = []
+            [classes.extend(class_list) for class_list in class_num]
+            
+        # Mark objects not trained on if with_OOD is true else remove them
+        classes_not_trained_on = self.get_classes_not_trained_on()
+        if self.with_OOD == True:
+            for i in range(len(classes)):
+                if classes[i] in classes_not_trained_on:
+                    classes[i] = classes[i] + '_OOD'
+        else:
+            idx_trained_on = [i for i in range(len(classes)) if classes[i] 
+                                                                    not in classes_not_trained_on]
+            objects = [objects[i] for i in idx_trained_on]
+            bboxs = [bboxs[i] for i in idx_trained_on]
+            classes = [classes[i] for i in idx_trained_on]
+            
+        return objects, bboxs, classes
     
     
     def calc_aP_for_class(self, probs_df: pd.DataFrame, 
@@ -449,7 +543,7 @@ class ImageClassifier():
                 
         aP = self._calc_AUC_(prec_AUC, rec_AUC)
 
-        return aP, precision, recall
+        return aP, precision, recall, prec_AUC, rec_AUC
 
 
     def _calc_AUC_(self, precision: list, recall: list):
@@ -474,11 +568,18 @@ class ImageClassifier():
         """
         true_classes_unique = pd.unique(true_classes)
         aP_df = pd.Series(index=true_classes_unique)
+        aP_plotting = {'precision':{}, 'recall':{}, 'prec_AUC':{}, 'rec_AUC':{}}
         for class_ in true_classes_unique:
-            aP_df[class_],_,_ = self.calc_aP_for_class(probs_df,true_classes,class_)
+            aP_df[class_],prec,rec,prec_auc,rec_auc = self.calc_aP_for_class(probs_df,
+                                                                             true_classes,
+                                                                             class_)
+            aP_plotting['precision'][class_] = prec
+            aP_plotting['recall'][class_] = rec
+            aP_plotting['prec_AUC'][class_] = prec_auc
+            aP_plotting['rec_AUC'][class_] = rec_auc
         
         MaP = aP_df.mean()    
-        return MaP, aP_df
+        return MaP, aP_df, aP_plotting
         
         
     def calc_accuracy(self, probs_df: pd.DataFrame, 
@@ -488,30 +589,57 @@ class ImageClassifier():
 
         Args:
             probs_df (pd.DataFrame): probability distributions for all samples
-            true_classes (list): true classes
+            true_classes (list): list of true classes
 
         Returns:
-            acc, acc_df: The accuracy of the model (acc), and class specific accuracies (acc_df)
+            acc, acc_mean_class, acc_df: The accuracy of the model (acc), the mean across class
+                                         accuracies (acc_mean_class), 
+                                         and class specific accuracies (acc_df)
         """
         true_classes_unique = pd.unique(true_classes)
-        acc_df = pd.Series(index=true_classes_unique)
-        pred_classes = probs_df.idxmax(0)
+        acc_df_top1 = pd.Series(np.zeros((len(true_classes_unique),)),index=true_classes_unique)
+        acc_df_top2 = pd.Series(np.zeros((len(true_classes_unique),)),index=true_classes_unique)
+        acc_df_top3 = pd.Series(np.zeros((len(true_classes_unique),)),index=true_classes_unique)
+        acc_df_top5 = pd.Series(np.zeros((len(true_classes_unique),)),index=true_classes_unique)
+        pred_classes = []
+        [pred_classes.append(list(probs_df.iloc[:,i].sort_values()[::-1].index[:5])) for i in 
+                             range(len(probs_df.columns))]
+ 
+        for i, classes in enumerate(pred_classes):
+            t_class = true_classes[i]
+            acc_df_top1[t_class] += t_class in classes[:1]
+            acc_df_top2[t_class] += t_class in classes[:2]
+            acc_df_top3[t_class] += t_class in classes[:3]
+            acc_df_top5[t_class] += t_class in classes[:5]
+            
+        # Get overall metrics
+        n = len(pred_classes)
+        acc_top1 = acc_df_top1.sum()/n
+        acc_top2 = acc_df_top2.sum()/n
+        acc_top3 = acc_df_top3.sum()/n
+        acc_top5 = acc_df_top5.sum()/n
         
-        for class_ in true_classes_unique:
-            true_classes_idx = np.array(true_classes)==class_
-            acc_df[class_] = np.mean(pred_classes[true_classes_idx] == class_)
+        # Get class specific metrics    
+        value_c = pd.Series(true_classes).value_counts()
+        acc_df_top1 = acc_df_top1/value_c
+        acc_df_top2 = acc_df_top2/value_c
+        acc_df_top3 = acc_df_top3/value_c
+        acc_df_top5 = acc_df_top5/value_c
         
-        acc = np.mean(pred_classes==true_classes)
-        return acc, acc_df
+        acc_df = pd.DataFrame({'acc_top1': acc_df_top1,
+                               'acc_top2': acc_df_top2,
+                               'acc_top3': acc_df_top3,
+                               'acc_top5': acc_df_top5})
+        
+        return acc_top1, acc_top2, acc_top3, acc_top5, acc_df
     
     
     def calc_ECE(self, probs_df: pd.DataFrame, 
-                       true_classes: list,
-                       num_bins: int = 10):
+                       true_classes: list):
         true_classes = np.array(true_classes)
         true_classes_unique = pd.unique(true_classes).tolist()
         true_classes_unique.append('All')
-        bins = np.linspace(0,1,num_bins+1)
+        bins = np.array([0,0.01,0.05,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,0.95,0.99,1])
         bins_mid = [(bins[i+1]+bins[i])/2 for i in range(len(bins)-1)]
         
         # Init dataframes for storing accuracies of bins and number of elements in each bin
@@ -520,7 +648,6 @@ class ImageClassifier():
         
         num_each_bin_df = pd.DataFrame(index = bins_mid, columns = true_classes_unique)
         num_each_bin_df['All'] = np.zeros((len(bins_mid),))
-        
         
         # reset true classes
         true_classes_unique = pd.unique(true_classes).tolist()
@@ -540,13 +667,28 @@ class ImageClassifier():
                     num_each_bin_df.loc[bins_mid[i],class_] = np.sum(class_probs_in_bin)
                     num_each_bin_df.loc[bins_mid[i],'All'] += np.sum(class_probs_in_bin)
 
-        
+        # Calc accuracy for all images
         cali_plot_df['All'] = cali_plot_df['All']/num_each_bin_df['All']
         
-        ECE = self._calc_ECE_(cali_plot_df['All'],num_each_bin_df['All'])
-        CECE, CECE_df = self._calc_CECE_(cali_plot_df,num_each_bin_df)
-
-        return cali_plot_df, ECE, CECE, CECE_df
+        # Calculate non-weighted mean across accuracies
+        cali_plot_df['Class_mean'] = cali_plot_df.iloc[:,:-1].mean(axis=1)
+        num_each_bin_df['Class_mean'] = num_each_bin_df['All']
+        
+        # Calaculate ECE across weighted and non-weighted accuracies
+        # SCE:
+        # https://medium.com/codex/metrics-to-measuring-calibration-in-deep-learning-36b0b11fe816
+        SCE = self._calc_ECE_(cali_plot_df['All'],num_each_bin_df['All'])
+        ECE_class_mean = self._calc_ECE_(cali_plot_df['Class_mean'],
+                                         num_each_bin_df['All'])
+        CECE, CECE_df = self._calc_CECE_(cali_plot_df.iloc[:,:-2],num_each_bin_df.iloc[:,:-2])
+        
+        # Calaculate ECE across weighted and non-weighted accuracies (remove the 0-0.01 bin)
+        SCE_m0 = self._calc_ECE_(cali_plot_df['All'].iloc[1:],num_each_bin_df['All'].iloc[1:])
+        ECE_class_mean_m0 = self._calc_ECE_(cali_plot_df['Class_mean'].iloc[1:],
+                                         num_each_bin_df['All'].iloc[1:])
+        
+        return (cali_plot_df, ECE_class_mean, 
+                ECE_class_mean_m0, SCE, SCE_m0, CECE, CECE_df, num_each_bin_df)
     
     
     def _calc_ECE_(self, accuracies: pd.Series,
@@ -555,11 +697,12 @@ class ImageClassifier():
         ECE = (num_samples_bins/n*np.abs(accuracies-accuracies.index)).sum()
         
         return ECE
-    
+
+ 
     def _calc_CECE_(self, accuracies: pd.DataFrame,
                           num_samples_bins: pd.DataFrame):
-        CECE_df = pd.Series(index=accuracies.columns[:-1])
-        for i in range(len(accuracies.columns)-1):
+        CECE_df = pd.Series(index=accuracies.columns)
+        for i in range(len(accuracies.columns)):
             
             class_ = accuracies.columns[i]
             n = num_samples_bins[class_].sum()
@@ -570,16 +713,33 @@ class ImageClassifier():
         return CECE, CECE_df
         
         
-"""
-# Extract classifier model
-classifier = ImageClassifier('golden-puddle-238','TRAIN',0)
+    def _min_dist_NN_(self, ranks, mean_emb, var_emb, num_NN, num_MC):
+        # extract num_NN nearest neighbours
+        ranks = ranks[:num_NN]
 
-# Calculate probabilities
-probs_df, true_classes = classifier.get_probability_dist_dataset('test',30,1000)
-
-
-MaP, aP_df = classifier.calc_MaP(probs_df,true_classes)
-acc, acc_df = classifier.calc_accuracy(probs_df,true_classes)
-cali_plot_df, ECE, CECE, CECE_df = classifier.calc_ECE(probs_df,true_classes)
-pdb.set_trace()
-"""
+        # Extract means, variance, and classes
+        means_NN = self.means[:,ranks].cuda()
+        vars_NN = self.vars[ranks].cuda()
+        classes_NN = [self.classes[i] for i in ranks]
+    
+        # Calc scaled non-centered chi-sq dists parameters
+        scaling = var_emb + vars_NN
+        delta = (mean_emb - means_NN.T).T
+        nonc = (scaling**(-1)*torch.diag(torch.matmul(delta.T,delta))).cpu().numpy()
+        nonc = np.repeat(nonc,num_MC).reshape(num_NN,num_MC).T
+        df = len(mean_emb)
+        df = np.repeat(df,num_NN*num_MC).reshape(num_NN,num_MC).T
+        
+        # Sample dist
+        dist_to_NN = (scaling*torch.Tensor(noncentral_chisquare(df,nonc,)).cuda()).T
+        
+        # Find smallest distance to image
+        _, indx_min = torch.min(dist_to_NN,0)
+        indx_class, counts = indx_min.unique(return_counts=True)
+        counts = counts.cpu()/num_MC
+        probs = {key:0 for key in np.unique(self.classes)}
+        for i in range(len(counts)):
+            probs[classes_NN[indx_class[i].item()]]+=counts[i].item()
+        
+        return probs
+    

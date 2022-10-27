@@ -1,10 +1,10 @@
 #!/bin/bash
-export R=17
+export R=16
 ### NAME OF FILE
-#BSUB -J config17
+#BSUB -J config16
 ### OUTPUT AND ERROR FILE
-#BSUB -o config_hpc/config17.out
-#BSUB -e config_hpc/config17.err
+#BSUB -o config_hpc/config16.out
+#BSUB -e config_hpc/config16.err
 ### QUEUE TO BE USED
 #BSUB -q gpuv100
 ### gpu memory

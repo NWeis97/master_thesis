@@ -38,15 +38,15 @@ class AverageMeter(object):
 
 
 def print_PCA_tSNE_plot(data: np.array ,qvars: np.array, classes: list, epoch: int,
-                        varP: float, mode: str, size: int=100, perp: int=10, n_iter: int=1000,
-                        lr: int=200, early_ex: int=12, init: str='pca'):
+                        varP: float, mode: str, size: int=100, perp: int=15, n_iter: int=2000,
+                        lr: int=200, early_ex: int=10, init: str='pca'):
     """This function makes a scatterplot of the embedding space of *data* with pseudo-variances
        *qvars*
        The classes are given by a list and epoch defines the epoch at call-time (for naming).
 
     Args:
-        data (np.array): A (out_dim-1,num_quries) tensor with embedding means
-        qvars (np.array): A (num_quries,) tensor with embedding variances
+        data (np.array): A (out_dim-1,num_quries) array with embedding means
+        qvars (np.array): A (num_quries,) array with embedding variances
         classes (list): List of classes with length *num_quries*
         epoch (int): Epoch number at call-time
         mode (str): train/val for saving-location
@@ -60,12 +60,43 @@ def print_PCA_tSNE_plot(data: np.array ,qvars: np.array, classes: list, epoch: i
     if (mode != 'train') & (mode != 'val') & (mode != 'test'):
         raise ValueError('Unknown mode!')
     
+    # Marker sizes
     sizes = np.array([size]*len(classes))
     df_subset = pd.DataFrame()
     df_subset['size'] = sizes
-    df_subset['y'] = classes
+    df_subset['class'] = classes
+    
+    max_size = 10*size*2
+    min_size = size/4*2
     df_subset['var'] = qvars/varP
+    df_subset['var'] = (df_subset['var']-np.min(df_subset['var']))/(np.max(df_subset['var'])-
+                                                                    np.min(df_subset['var']))
+    df_subset['var'] = min_size + df_subset['var'] * (max_size-min_size)
 
+    # Marker types
+    marker_t = []
+    for i in range(len(classes)):
+        if '_OOD' in classes[i]:
+            marker_t.append('OOD')
+        else:
+            marker_t.append('ID')
+    df_subset['type'] = marker_t
+    markers = {"ID": "o", "OOD": "s"}
+    
+    # Palette
+    if len(pd.unique(classes)) <= 10:
+        palette = sns.color_palette("hls",10)
+    elif len(pd.unique(classes)) <= 20:
+        pal1 = sns.color_palette("hls",10)
+        pal2 = sns.color_palette("husl",10)
+        palette = []
+        for i in range(10):
+            palette.append(pal1[i])
+            palette.append(pal2[i])
+    else:
+        palette = sns.color_palette("hls", len(pd.unique(classes)))
+        
+    
     # get tSNE embeddings
     tsne = TSNE(n_components=2, verbose=0, perplexity=perp,
                 n_iter=n_iter,init=init,learning_rate=lr,early_exaggeration=early_ex,)
@@ -83,31 +114,35 @@ def print_PCA_tSNE_plot(data: np.array ,qvars: np.array, classes: list, epoch: i
     fig, ax = plt.subplots(1,1,figsize=(12,7))
     g=sns.scatterplot(
         x="tsne-2d-one", y="tsne-2d-two",
-        hue="y",
-        palette=sns.color_palette("hls", len(pd.unique(classes))),
+        hue="class",
+        palette=palette,
         data=df_subset,
         legend="full",
+        style="type",
         alpha=1,
         s=size,
-        ax=ax
+        ax=ax,
+        markers=markers
     )
     g.legend(loc='center left', bbox_to_anchor=(2.5, 0.5), ncol=1)
     sns.scatterplot(
         x="tsne-2d-one", y="tsne-2d-two",
-        hue="y",
-        palette=sns.color_palette("hls", len(pd.unique(classes))),
+        hue="class",
+        palette=palette,
         data=df_subset,
         alpha=0.5,
-        s=df_subset['var']*size*2,
+        s=df_subset['var'],
+        style="type",
         ax=ax,
-        legend = False
+        legend = False,
+        markers=markers
     )
     ax.set_xlabel('tSNE-2d-one', fontsize=15)
     ax.set_ylabel('tSNE-2d-two', fontsize=15)
     if mode == 'test':
-        ax.set_title(f'tSNE test', fontsize=20)
+        ax.set_title(f'tSNE test (var_prior={varP:.3f})', fontsize=20)
     else:
-        ax.set_title(f'tSNE epoch {epoch}', fontsize=20)
+        ax.set_title(f'tSNE epoch {epoch} (var_prior={varP:.3f})', fontsize=20)
     ax.legend(fontsize=15)
     
     # Move legend
@@ -121,30 +156,34 @@ def print_PCA_tSNE_plot(data: np.array ,qvars: np.array, classes: list, epoch: i
     fig2, ax2 = plt.subplots(1,1,figsize=(12,7))
     g2 = sns.scatterplot(
         x="pca-one", y="pca-two",
-        hue="y",
-        palette=sns.color_palette("hls", len(pd.unique(classes))),
+        hue="class",
+        palette=palette,
         data=df_subset,
         legend="full",
+        style="type",
         alpha=1,
         s=size,
-        ax=ax2
+        ax=ax2,
+        markers=markers
     )
     sns.scatterplot(
         x="pca-one", y="pca-two",
-        hue="y",
-        palette=sns.color_palette("hls", len(pd.unique(classes))),
+        hue="class",
+        palette=palette,
         data=df_subset,
         alpha=0.5,
-        s=df_subset['var']*size*2,
+        s=df_subset['var'],
+        style="type",
         ax=ax2,
-        legend = False
+        legend = False,
+        markers=markers
     )
     ax2.set_xlabel('PCA-2d-one', fontsize=15)
     ax2.set_ylabel('PCA-2d-two', fontsize=15)
     if mode == 'test':
-        ax2.set_title(f'PCA test', fontsize=20)
+        ax2.set_title(f'PCA test (var_prior={varP:.3f})', fontsize=20)
     else:
-        ax2.set_title(f'PCA epoch {epoch}', fontsize=20)
+        ax2.set_title(f'PCA epoch {epoch} (var_prior={varP:.3f})', fontsize=20)
     ax2.legend(fontsize=15)
     
     # Move legend
