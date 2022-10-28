@@ -221,59 +221,60 @@ class ImageClassifier():
         logger.info("Extract means and variance for model data")
 
         # extract means and variances 
-        if self.balanced_classes < 1:
-            logger.info("No balancing of classes")
-            qvecs = torch.zeros(self.params['dim_out']-1, len(self.objects)).cuda()
-            qvars = torch.zeros(len(self.objects),).cuda()
-        
-            for i, input in enumerate(loader):
-                output = self.model(input.cuda()).data.squeeze()
-                qvecs[:, i] = output[:-1]
-                qvars[i] = output[-1]
-                if (i+1) % 1000 == 0 or (i+1) == len(self.objects):
-                    logger.info('>>>> {}/{} done... '.format(i+1, len(self.objects)))
-        
-            classes = self.classes
-        
-        else:
-            logger.info(f"Balancing of classes: Total number of samples from each class will be "+
-                        f"{self.balanced_classes}")
-            dist_of_classes = pd.value_counts(self.classes)
-            num_samples = len(dist_of_classes)*self.balanced_classes
-            qvecs = torch.zeros(self.params['dim_out']-1, num_samples).cuda()
-            qvars = torch.zeros(num_samples,).cuda()
+        with torch.no_grad():
+            if self.balanced_classes < 1:
+                logger.info("No balancing of classes")
+                qvecs = torch.zeros(self.params['dim_out']-1, len(self.objects)).cuda()
+                qvars = torch.zeros(len(self.objects),).cuda()
             
-            # for track-keeping
-            classes_count = {dist_of_classes.index[i]:0 for i in range(len(dist_of_classes))}
-            classes = []
-            count = 0
+                for i, input in enumerate(loader):
+                    output = self.model(input.cuda()).data.squeeze()
+                    qvecs[:, i] = output[:-1]
+                    qvars[i] = output[-1]
+                    if (i+1) % 1000 == 0 or (i+1) == len(self.objects):
+                        logger.info('>>>> {}/{} done... '.format(i+1, len(self.objects)))
             
-            while True:
-                r_ord = torch.randperm(len(self.objects))
-                for i in range(len(self.objects)):
-                    sample_class = self.classes[r_ord[i]]
-                    if classes_count[sample_class] < self.balanced_classes: # add object
-                        
-                        if dist_of_classes[sample_class] <= self.balanced_classes: # no aug
-                            input = OFL.__getitem__(r_ord[i])
-                        else:
-                            input = OFL_aug.__getitem__(r_ord[i])
-                        
-                        # save output
-                        input = input[None,:,:,:]
-                        output = self.model(input.cuda()).data.squeeze()
-                        qvecs[:, count] = output[:-1]
-                        qvars[count] = output[-1]
-                        
-                        # add counts and class
-                        classes.append(sample_class)
-                        classes_count[sample_class] += 1
-                        count += 1
-                        if (count) % 1000 == 0 or (count) == num_samples:
-                            logger.info('>>>> {}/{} done... '.format(count, num_samples))
+                classes = self.classes
+            
+            else:
+                logger.info(f"Balancing of classes: Total number of samples from each class will be "+
+                            f"{self.balanced_classes}")
+                dist_of_classes = pd.value_counts(self.classes)
+                num_samples = len(dist_of_classes)*self.balanced_classes
+                qvecs = torch.zeros(self.params['dim_out']-1, num_samples).cuda()
+                qvars = torch.zeros(num_samples,).cuda()
+                
+                # for track-keeping
+                classes_count = {dist_of_classes.index[i]:0 for i in range(len(dist_of_classes))}
+                classes = []
+                count = 0
+                
+                while True:
+                    r_ord = torch.randperm(len(self.objects))
+                    for i in range(len(self.objects)):
+                        sample_class = self.classes[r_ord[i]]
+                        if classes_count[sample_class] < self.balanced_classes: # add object
                             
-                if count == num_samples:
-                    break;
+                            if dist_of_classes[sample_class] <= self.balanced_classes: # no aug
+                                input = OFL.__getitem__(r_ord[i])
+                            else:
+                                input = OFL_aug.__getitem__(r_ord[i])
+                            
+                            # save output
+                            input = input[None,:,:,:]
+                            output = self.model(input.cuda()).data.squeeze()
+                            qvecs[:, count] = output[:-1]
+                            qvars[count] = output[-1]
+                            
+                            # add counts and class
+                            classes.append(sample_class)
+                            classes_count[sample_class] += 1
+                            count += 1
+                            if (count) % 1000 == 0 or (count) == num_samples:
+                                logger.info('>>>> {}/{} done... '.format(count, num_samples))
+                                
+                    if count == num_samples:
+                        break;
             
         
         return qvecs, qvars, classes
@@ -298,9 +299,10 @@ class ImageClassifier():
         img_path = self.ims_root + f'/{img_name}'
         img = image_object_loader(img_path,bbox,self.transformer)
         img = img[None,:,:,:] #Expand dim
-        output = self.model(img.cuda()).data.squeeze()
-        mean_emb = output[:-1]
-        var_emb = output[-1]
+        with torch.no_grad():
+            output = self.model(img.cuda()).data.squeeze()
+            mean_emb = output[:-1]
+            var_emb = output[-1]
         
         return mean_emb, var_emb
     

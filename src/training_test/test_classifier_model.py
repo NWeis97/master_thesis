@@ -59,6 +59,12 @@ def main(args):
     (cali_plot_df, ECE_class_mean, ECE_class_mean_m0, SCE, 
                    SCE_m0, CECE, CECE_df, num_samples_bins) = classifier.calc_ECE(probs_df,true_classes)
     
+    # UCE
+    UCE, UCE_fig, UCE_df = get_UCE(probs_df, true_classes,len(classifier.unique_classes))
+    
+    # AvU
+    AvU, AvU_df = get_AvU(probs_df, true_classes,len(classifier.unique_classes))
+    
     # Log simple measures
     wandb.log({'MaP':MaP,
                'Accuracy top1': acc_top1,
@@ -69,7 +75,9 @@ def main(args):
                'SCE': SCE,
                'ECE_class_mean_m0': ECE_class_mean_m0,
                'SCE_m0': SCE_m0,
-               'CECE': CECE,})
+               'CECE': CECE,
+               'UCE': UCE,
+               'AvU': AvU})
  
     # Log class specific metrics
     class_metrics = pd.DataFrame({'Average precision': aP_df,
@@ -80,7 +88,19 @@ def main(args):
     class_metrics = class_metrics.reset_index()
     
     wandb.log({'Class Metrics': wandb.Table(dataframe=class_metrics),
-               'Class Calibration': wandb.Table(dataframe=cali_plot_df.reset_index())})
+               'Class Calibration': wandb.Table(dataframe=cali_plot_df.reset_index()),
+               'Uncertainty Calibration': wandb.Table(dataframe=UCE_df),
+               'AvU_df': wandb.Table(dataframe=AvU_df.reset_index().rename(columns={'index':'Accuracy'}))})
+    
+    # Get confusion matrix
+    pred_classes = probs_df.idxmax(0)
+    mapper = {classifier.unique_classes[i]:i for i in range(len(classifier.unique_classes))}
+    t_class = [mapper[class_] for class_ in true_classes]
+    p_class = [mapper[class_] for class_ in pred_classes]
+    wandb.log({"confusion_matrix" : wandb.plot.confusion_matrix(probs=None,y_true=t_class, 
+                                                                preds=p_class,
+                                                                class_names=classifier.unique_classes)})
+
     
     # Get calibration plots
     cali_plots = calibration_plots(cali_plot_df,num_samples_bins)
@@ -89,7 +109,8 @@ def main(args):
     fig_tsne_test, fig_pca_test = visualize_embedding_space(classifier)
     wandb.log({'fig_tsne_test': wandb.Image(fig_tsne_test),
                'fig_pca_test' : wandb.Image(fig_pca_test),
-               'Calibration plots': wandb.Image(cali_plots)})
+               'Calibration plots': wandb.Image(cali_plots),
+               'Uncertainty calibration plots': wandb.Image(UCE_fig)})
     
     
     # Get images for each class of for correct is misclassied images
@@ -167,17 +188,18 @@ def main(args):
                    'Confidence vs. accuracy_count': conf_vs_acc_df['Count'][i]})
     
     # Accurate when certain table
-    acc_cert_df = accruate_when_certain(probs_df, true_classes)
+    acc_cert_df = accruate_when_certain(probs_df, true_classes,len(classifier.unique_classes))
     for i in range(len(acc_cert_df['uncertainty'])):
         wandb.log({'Accurate when certain_unc_thresh': acc_cert_df['uncertainty'][i],
                    'Accurate when certain_acc': acc_cert_df['Accuracy'][i],
                    'Accurate when certain_count': acc_cert_df['Count'][i]})
     
     # Uncertain when inaccurate
-    uncert_inacc_df = uncertain_when_inaccurate(probs_df, true_classes)
+    uncert_inacc_df = uncertain_when_inaccurate(probs_df, true_classes,len(classifier.unique_classes))
     for i in range(len(uncert_inacc_df['uncertainty'])):
         wandb.log({'Uncertain when inaccurate_thresh_unc': uncert_inacc_df['uncertainty'][i],
                    'Uncertain when inaccurate_frac_unc': uncert_inacc_df['Frac_uncertain'][i]})
+    
     
 
 def visualize_embedding_space(classifier: ImageClassifier):
@@ -234,7 +256,7 @@ def calibration_plots(cali_plot_df: pd.DataFrame,
                       num_samples_bins: pd.DataFrame):
     num_classes = len(cali_plot_df.columns)-2
     
-    fig, axes = plt.subplots(nrows=int(num_classes/5)+1,ncols=5, figsize=(12,12),
+    fig, axes = plt.subplots(nrows=int(num_classes/5)+1,ncols=5, figsize=(16,12),
                              sharex=True, sharey=True)
     
     x = cali_plot_df.index.tolist()
@@ -305,7 +327,7 @@ def precision_recall_plots(aP_plotting: pd.DataFrame,
                            aP_df: pd.DataFrame):
     num_classes = len(aP_plotting['precision'].keys())
     
-    fig, axes = plt.subplots(nrows=int(np.ceil(num_classes/5)),ncols=5, figsize=(12,12),
+    fig, axes = plt.subplots(nrows=int(np.ceil(num_classes/5)),ncols=5, figsize=(16,12),
                              sharex=True, sharey=True)
     
     # only these two lines are calibration curves
@@ -390,8 +412,6 @@ def sort_idx_on_var_per_class(vars, classes):
     
     return dict_vars
 
-
-
 def confidence_vs_accuracy(probs_df: pd.DataFrame,
                            true_classes: list):
     true_classes = np.array(true_classes)
@@ -412,18 +432,37 @@ def confidence_vs_accuracy(probs_df: pd.DataFrame,
     conf_acc_df = conf_acc_df.reset_index().rename(columns={'index':'Confidence'})
     return conf_acc_df
 
+def _get_entropy_(probs,num_classes):
+    uncert_min = 0
+    uncert_max = -1/num_classes*np.log(1/num_classes)
+    ui = np.abs(-np.sum(probs*np.log(probs))/num_classes)
+    
+    # Normalize uncertainty 
+    ui = (ui - uncert_min)/(uncert_max - uncert_min)
+    
+    return ui
 
-def accruate_when_certain(probs_df: pd.DataFrame,
-                          true_classes: list):
-    true_classes = np.array(true_classes)
-    pred_classes = probs_df.idxmax(0)
+def _get_uncertainties_(probs_df: pd.DataFrame,
+                        num_classes: int):
     uncertainty = []
     for i in range(len(probs_df.columns)):
-        ui = np.abs(-np.sum(probs_df.iloc[:,i]*np.log(probs_df.iloc[:,i])))
+        ui = _get_entropy_(probs_df.iloc[:,i],num_classes)
         uncertainty.append(ui)
     
     uncertainty = np.array(uncertainty)
     uncertainty_unique = np.unique(uncertainty)
+    
+    return uncertainty, uncertainty_unique
+
+
+def accruate_when_certain(probs_df: pd.DataFrame,
+                          true_classes: list,
+                          num_classes: int):
+    true_classes = np.array(true_classes)
+    pred_classes = probs_df.idxmax(0)
+    
+    # Get uncertainties
+    uncertainty, uncertainty_unique = _get_uncertainties_(probs_df, num_classes)
     
     acc_cert_df = pd.DataFrame({'uncertainty':uncertainty_unique})
     acc_cert_df['Accuracy'] = np.zeros((len(uncertainty_unique),))
@@ -440,16 +479,15 @@ def accruate_when_certain(probs_df: pd.DataFrame,
 
 
 def uncertain_when_inaccurate(probs_df: pd.DataFrame,
-                              true_classes: list):
+                              true_classes: list,
+                              num_classes: int):
     true_classes = np.array(true_classes)
     pred_classes = probs_df.idxmax(0)
-    uncertainty = []
-    for i in range(len(probs_df.columns)):
-        ui = np.abs(-np.sum(probs_df.iloc[:,i]*np.log(probs_df.iloc[:,i])))
-        uncertainty.append(ui)
     
+    # Get uncertainties
+    uncertainty, _ = _get_uncertainties_(probs_df, num_classes)
     idx_inacc = pred_classes != true_classes
-    uncertainty = np.array(uncertainty)[idx_inacc]
+    uncertainty = uncertainty[idx_inacc]
     uncertainty_unique = np.unique(uncertainty)
     
     acc_cert_df = pd.DataFrame({'uncertainty':uncertainty_unique})
@@ -464,6 +502,162 @@ def uncertain_when_inaccurate(probs_df: pd.DataFrame,
     
     return acc_cert_df
 
+
+def get_UCE(probs_df: pd.DataFrame,
+            true_classes: list,
+            num_classes: int):
+    true_classes = np.array(true_classes)
+    pred_classes = probs_df.idxmax(0)
+    
+    # Get uncertainties
+    uncertainty, _ = _get_uncertainties_(probs_df, num_classes)
+    
+    # Create expected bins
+    uncert_targets = [0,0.0025,0.005,0.01,0.025,0.05,0.1,0.2,0.3,0.4,0.5,0.75,1]
+    uncert_bins = [(uncert_targets[i+1]+uncert_targets[i])/2 for i in range(len(uncert_targets)-1)]
+    uncert_targets[0] -= 0.01
+    uncert_targets[-1] += 0.01
+    
+    inacc_targets = np.array(uncert_bins)/((num_classes-1)/float(num_classes))
+    # Init series
+    uncert_cali_plot_df = pd.DataFrame(index = inacc_targets, columns=['True error','Count'])
+    
+    # Calc expected vs. actual:
+    for i in range(len(uncert_bins)):
+        idx_in_bin = (uncertainty>=uncert_targets[i]) & (uncertainty<uncert_targets[i+1])
+        preds = pred_classes[idx_in_bin]
+        trues = true_classes[idx_in_bin]
+        frac_inaccurate = np.mean(preds != trues)
+        
+        uncert_cali_plot_df['True error'].iloc[i] = frac_inaccurate
+        uncert_cali_plot_df['Count'].iloc[i] = np.sum(idx_in_bin)
+        
+    # Calculate UCE
+    n = uncert_cali_plot_df['Count'].sum()
+    UCE = np.sum(uncert_cali_plot_df['Count']/n*
+                 np.abs(uncert_cali_plot_df['True error']-uncert_cali_plot_df.index))
+    
+    uncert_cali_plot_df = uncert_cali_plot_df.reset_index().rename(columns={'index':'Uncertainty'})
+    uncert_cali_plot_df['Optimal'] = uncert_cali_plot_df['Uncertainty']*(num_classes-1)/(num_classes)
+    
+    
+    # Plot UCE plot
+    fig, ax = plt.subplots(nrows=1,ncols=2, figsize=(12,6))
+    
+    size_min = 1
+    size_max = 100
+    # only these two lines are calibration curves
+    sizes = uncert_cali_plot_df['Count']
+    sizes = (sizes-np.min(sizes))/(np.max(sizes)-np.min(sizes))*100
+    sizes = size_min + (size_max-size_min)*sizes/100
+    sizes = sizes.astype(float)
+    color = '#008000'
+    x = uncert_cali_plot_df['Uncertainty']
+    y = uncert_cali_plot_df['True error']
+
+    ax.flatten()[0].plot(x,y, marker='o', linewidth=1, markersize=0,color=color)
+    ax.flatten()[0].scatter(x,y,marker='o',s=sizes, edgecolors='k', c=color, linewidth=0.5)
+    ax.flatten()[1].plot(x,y, marker='o', linewidth=1, markersize=0,color=color)
+    ax.flatten()[1].scatter(x,y,marker='o',s=sizes, edgecolors='k', c=color, linewidth=0.5)
+    
+    # Add reference lines
+    y2 = uncert_cali_plot_df['Optimal']
+    ax.flatten()[0].plot(x,y2, linewidth=1, color='black', linestyle='--', markersize=0)
+    ax.flatten()[1].plot(x,y2, linewidth=1, color='black', linestyle='--', markersize=0)
+    ax.flatten()[1].set_yscale('log')
+
+    fig.supxlabel('Uncertainty',fontsize=20, y=0.03)
+    fig.supylabel('True error',fontsize=20, x=0.03)
+    fig.suptitle('Uncertainty calibration plot',fontsize=20, y=0.96)
+    
+    legend_elements = [Line2D([0], [0], marker='o', color='k', label='#Samples < 100',
+                                        markerfacecolor='#008000', markersize=1,linewidth=0,
+                                        markeredgewidth=0.5),
+                       Line2D([0], [0], marker='o', color='k', label='#Samples = 500',
+                                        markerfacecolor='#008000', markersize=5,linewidth=0,
+                                        markeredgewidth=0.5),
+                       Line2D([0], [0], marker='o', color='k', label='#Samples > 1000',
+                                        markerfacecolor='#008000', markersize=10,linewidth=0,
+                                        markeredgewidth=0.5)]
+    
+    plt.subplots_adjust(left=0.1, right=0.82, top=0.86, bottom=0.14)
+    fig.legend(handles=legend_elements, loc='center', bbox_to_anchor=(0.91, 0.6))
+    
+     # Add legend for coloring
+    legend_elements2 = [Line2D([0], [0], marker='', color='black', label='Optimal Calibration',
+                                        markerfacecolor='#1f77b4', markersize=0,linewidth=1,
+                                        markeredgewidth=0, linestyle='--'),
+                       Line2D([0], [0], marker='', color='#008000', label='Model',
+                                        markersize=0,linewidth=1,markeredgewidth=0)]
+
+    legend2 = fig.legend(legend_elements2,['Optimal Calibration','Model'], 
+                         loc='center', bbox_to_anchor=(0.91, 0.4))
+    fig.add_artist(legend2)
+    
+    
+    return UCE, fig, uncert_cali_plot_df
+    
+    
+    
+def get_AvU(probs_df: pd.DataFrame,
+            true_classes: list,
+            num_classes: int):
+    true_classes = np.array(true_classes)
+    pred_classes = probs_df.idxmax(0)
+    
+    # Get uncertainties
+    uncertainty, uncertainty_unique = _get_uncertainties_(probs_df, num_classes)
+    
+    # Get index of accurate and inaccurate predicitons
+    idx_acc = pred_classes == true_classes
+    idx_inacc = pred_classes != true_classes
+    
+    # Find mean uncertainty for accurate and iunaccurate predictions
+    acc_uncert = np.mean(uncertainty[idx_acc])
+    inacc_uncert = np.mean(uncertainty[idx_inacc])
+    
+    # Find threshold
+    u_thresh = (acc_uncert + inacc_uncert)/2
+    
+    # Calculate measures
+    nAU = np.sum(idx_acc & (uncertainty > u_thresh))
+    nAC = np.sum(idx_acc & (uncertainty <= u_thresh))
+    nIU = np.sum(idx_inacc & (uncertainty > u_thresh))
+    nIC = np.sum(idx_inacc & (uncertainty <= u_thresh))
+    
+    # Calc AvU score
+    AvU = (nAC+nIU)/(nAC+nAU+nIC+nIU)
+    
+    AvU_df = pd.DataFrame(index=['Accurate','Inaccurate'], columns=['Certain','Uncertain'])
+    AvU_df.loc['Accurate','Certain'] = nAC
+    AvU_df.loc['Inaccurate','Certain'] = nIC
+    AvU_df.loc['Accurate','Uncertain'] = nAU
+    AvU_df.loc['Inaccurate','Uncertain'] = nIU
+    
+    # Calc AUC for AvU
+    ACr_list = []
+    ICr_list = []
+    for u_thresh in uncertainty_unique:
+        nAU = np.sum(idx_acc & (uncertainty > u_thresh))
+        nAC = np.sum(idx_acc & (uncertainty <= u_thresh))
+        nIU = np.sum(idx_inacc & (uncertainty > u_thresh))
+        nIC = np.sum(idx_inacc & (uncertainty <= u_thresh))
+        
+        # Accurate Certain rate (like TPR)
+        ACr = nAC/(nAC+nAU)
+        
+        # Inaccurate Certain rate (Like FPR)
+        ICr = nIC/(nIC+nIU)
+        
+        # Append to lists
+        ACr_list.append(ACr)
+        ACr_list.append(ICr)
+        
+        
+    
+    
+    return AvU, AvU_df
+    
 
 if __name__ == '__main__':
     
