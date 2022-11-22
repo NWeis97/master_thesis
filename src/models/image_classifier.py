@@ -332,7 +332,7 @@ class ImageClassifier():
         
         dist = (torch.pow(self.means-mean_emb[None,:].T+1e-6, 2).sum(dim=0).sqrt())
         _, ranks = torch.sort(dist, dim=0, descending=False)
-        if method == 'min_dist_NN':
+        if method == 'min_dist_NN':    
             probs = self._min_dist_NN_(ranks, mean_emb, var_emb, num_NN, num_MC)
         elif method == 'avg_dist_rand':
             probs = self._avg_dist_rand_(mean_emb, var_emb, num_NN, num_MC)
@@ -645,11 +645,13 @@ class ImageClassifier():
         bins_mid = [(bins[i+1]+bins[i])/2 for i in range(len(bins)-1)]
         
         # Init dataframes for storing accuracies of bins and number of elements in each bin
-        cali_plot_df = pd.DataFrame(index = bins_mid, columns = true_classes_unique)
-        cali_plot_df['All'] = np.zeros((len(bins_mid),))
-        
+        cali_plot_df_acc  = pd.DataFrame(index = bins_mid, columns = true_classes_unique)
+        cali_plot_df_conf = pd.DataFrame(index = bins_mid, columns = true_classes_unique)
         num_each_bin_df = pd.DataFrame(index = bins_mid, columns = true_classes_unique)
-        num_each_bin_df['All'] = np.zeros((len(bins_mid),))
+        
+        cali_plot_df_acc['All']  = np.zeros((len(bins_mid),))
+        cali_plot_df_conf['All'] = np.zeros((len(bins_mid),))
+        num_each_bin_df['All']   = np.zeros((len(bins_mid),))
         
         # reset true classes
         true_classes_unique = pd.unique(true_classes).tolist()
@@ -664,8 +666,10 @@ class ImageClassifier():
                 class_probs_in_bin = (class_probs <= bins[i+1]) & (class_probs > bins[i])
                 class_probs_in_bin_true = true_classes[class_probs_in_bin]==class_
                 if class_probs_in_bin_true.size != 0:
-                    cali_plot_df.loc[bins_mid[i],class_] = np.mean(class_probs_in_bin_true)
-                    cali_plot_df.loc[bins_mid[i],'All'] += np.sum(class_probs_in_bin_true)
+                    cali_plot_df_acc.loc[bins_mid[i],class_] = np.mean(class_probs_in_bin_true)
+                    cali_plot_df_acc.loc[bins_mid[i],'All'] += np.sum(class_probs_in_bin_true)
+                    cali_plot_df_conf.loc[bins_mid[i],class_] = np.mean(class_probs_in_bin_true)
+                    cali_plot_df_conf.loc[bins_mid[i],'All'] += np.sum(class_probs_in_bin_true)
                     num_each_bin_df.loc[bins_mid[i],class_] = np.sum(class_probs_in_bin)
                     num_each_bin_df.loc[bins_mid[i],'All'] += np.sum(class_probs_in_bin)
 
@@ -679,18 +683,12 @@ class ImageClassifier():
         # Calaculate ECE across weighted and non-weighted accuracies
         # SCE:
         # https://medium.com/codex/metrics-to-measuring-calibration-in-deep-learning-36b0b11fe816
-        SCE = self._calc_ECE_(cali_plot_df['All'],num_each_bin_df['All'])
-        ECE_class_mean = self._calc_ECE_(cali_plot_df['Class_mean'],
-                                         num_each_bin_df['All'])
+        pdb.set_trace()
+        WECE = self._calc_ECE_(cali_plot_df['All'], num_each_bin_df['All'])
+        AECE = self._calc_ECE_(cali_plot_df['Class_mean'], num_each_bin_df['All'])
         CECE, CECE_df = self._calc_CECE_(cali_plot_df.iloc[:,:-2],num_each_bin_df.iloc[:,:-2])
         
-        # Calaculate ECE across weighted and non-weighted accuracies (remove the 0-0.01 bin)
-        SCE_m0 = self._calc_ECE_(cali_plot_df['All'].iloc[1:],num_each_bin_df['All'].iloc[1:])
-        ECE_class_mean_m0 = self._calc_ECE_(cali_plot_df['Class_mean'].iloc[1:],
-                                         num_each_bin_df['All'].iloc[1:])
-        
-        return (cali_plot_df, ECE_class_mean, 
-                ECE_class_mean_m0, SCE, SCE_m0, CECE, CECE_df, num_each_bin_df)
+        return (cali_plot_df, WECE, AECE, CECE, CECE_df, num_each_bin_df)
     
     
     def _calc_ECE_(self, accuracies: pd.Series,
@@ -744,4 +742,46 @@ class ImageClassifier():
             probs[classes_NN[indx_class[i].item()]]+=counts[i].item()
         
         return probs
+    
+    
+    
+    
+    
+    def _min_dist_NN_test_time_sampling_(self, ranks, mean_emb, var_emb):
+        import time
+        # extract num_NN nearest neighbours and use 1000 MC samples
+        num_MC = 200000
+        D = 15
+    
+        # Extract means, variance, and classes
+        means_NN = torch.randn((D,1)).cuda()
+        vars_NN = torch.ones((1,)).cuda()
+        mean_emb = torch.randn((D,1)).cuda()
+        var_emb = 2*torch.ones((1,)).cuda()
+    
+    
+        # Calc scaled non-centered chi-sq dists parameters
+        scaling = var_emb + vars_NN
+        delta = (mean_emb - means_NN.T).T
+        nonc = (scaling**(-1)*torch.diag(torch.matmul(delta.T,delta))).cpu().numpy()
+        df = D
+        
+        # TEST SAMPLING FROM KNOWN DISTRIBUTION
+        t_dist_0 = time.time()
+        # Sample dist
+        scaling.cpu().numpy()*noncentral_chisquare(df,nonc,num_MC)
+        t_dist_1 = time.time()
+
+    
+        # TEST SAMPLING FROM GAUSSIAN DISTRIBUTION THEN CALC DISTANCES
+        t_gaus_0 = time.time()
+        emb_samples = torch.distributions.Normal(mean_emb,torch.Tensor.repeat(var_emb,mean_emb.shape[0])).rsample(torch.Size((num_MC,)))
+        rank_samples = torch.distributions.Normal(means_NN.flatten(),torch.Tensor.repeat(vars_NN,mean_emb.shape[0])).rsample(torch.Size((num_MC,)))
+        (emb_samples - rank_samples).pow(2).sum(1).sqrt()
+        
+        t_gaus_1 = time.time()
+        
+        return t_dist_1-t_dist_0, t_gaus_1-t_gaus_0
+    
+    
     

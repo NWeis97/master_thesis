@@ -4,6 +4,8 @@ import shortuuid
 import logging
 import os
 import configparser
+from PIL import Image, ImageDraw
+from matplotlib.lines import Line2D
 
 # tSNE and PCA plot 
 from sklearn.manifold import TSNE
@@ -18,6 +20,7 @@ import warnings
 import wandb
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
+warnings.simplefilter("ignore", UserWarning)
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
@@ -328,3 +331,171 @@ def get_logger_test(name: str):
     logging.getLogger('matplotlib.pyplot').setLevel(logging.ERROR)
     
     return logger
+
+
+def print_tSNE_plot_with_images(data: np.array, objects: list, bbox: list, classes: list, 
+                                img_size: int, path: str, size: float=0.15, perp: int=15, 
+                                n_iter: int=2000, lr: int=200, early_ex: int=10, init: str='pca'):
+    """This function makes a scatterplot of the embedding space of *data* with pseudo-variances
+       *qvars*
+       The classes are given by a list and epoch defines the epoch at call-time (for naming).
+
+    Args:
+        data (np.array): A (out_dim-1,num_quries) array with embedding means
+        objects (list): A (num_quries,) list with object names
+        bbox (list): A (num_quries,) list with object names
+        classes (list): List of classes with length *num_quries*
+        img_size (int): size of image
+        path (str): path to images
+        size (float, optional): Size of images in plot. Default 0.15 of axis limits
+        perp (int, optional): tSNE optional. Defaults to 10.
+        n_iter (int, optional): tSNE optional. Defaults to 1000.
+        lr (int, optional): tSNE optional. Defaults to 200.
+        early_ex (int, optional): tSNE optional. Defaults to 12.
+        init (str, optional): tSNE optional. Defaults to 'pca'.
+    """
+
+    # Marker sizes
+    df_subset = pd.DataFrame()
+
+    # Marker types
+    marker_t = []
+    for i in range(len(classes)):
+        if '_OOD' in classes[i]:
+            marker_t.append('OOD')
+        else:
+            marker_t.append('ID')
+    df_subset['type'] = marker_t
+    markers = {"ID": "s", "OOD": "o"}
+    
+    # Palette
+    if len(pd.unique(classes)) <= 10:
+        palette = sns.color_palette("hls",10)
+    elif len(pd.unique(classes)) <= 20:
+        pal1 = sns.color_palette("hls",10)
+        pal2 = sns.color_palette("husl",10)
+        palette = []
+        for i in range(10):
+            palette.append(pal1[i])
+            palette.append(pal2[i])
+    else:
+        palette = sns.color_palette("hls", len(pd.unique(classes)))
+        
+    unique_classes = np.unique(classes)
+    class_to_color_map = {unique_classes[i]:i for i in range(len(unique_classes))}
+    
+    # get tSNE embeddings
+    tsne = TSNE(n_components=2, verbose=0, perplexity=perp,
+                n_iter=n_iter,init=init,learning_rate=lr,early_exaggeration=early_ex,)
+    tsne_results = tsne.fit_transform(data.T)
+    df_subset['tsne-2d-one'] = tsne_results[:,0]
+    df_subset['tsne-2d-two'] = tsne_results[:,1]
+    
+    # PCA components
+    pca = PCA(n_components=2)
+    pca_result = pca.fit_transform(data.T)
+    df_subset['pca-one'] = pca_result[:,0]
+    df_subset['pca-two'] = pca_result[:,1]
+    
+    # randomize 
+    rand_idx = np.random.permutation(range(len(objects)))
+
+    # tSNE plot
+    fig, ax = plt.subplots(1,1,figsize=(12,7))
+    min_x = min(df_subset['tsne-2d-one'])*1.15
+    max_x = max(df_subset['tsne-2d-one'])*1.15
+    min_y = min(df_subset['tsne-2d-two'])*1.15
+    max_y = max(df_subset['tsne-2d-two'])*1.15
+    ax.set_xlim(min_x,max_x)
+    ax.set_ylim(min_y,max_y)
+    
+    x_axis_range = max_x-min_x
+    y_axis_range = max_y-min_y
+    
+    for i in rand_idx:
+        color = palette[class_to_color_map[classes[i]]]
+        color = tuple(np.round(np.array(color)*256).astype(int).tolist())
+        img = Image.open(path+'/'+objects[i]).convert("RGB")
+        img_bbox = img.crop(bbox[i])
+        img_resize = img_bbox.resize((img_size,img_size))
+        img_full = ImageDraw.Draw(img_resize)
+        img_full.rectangle(((0, 0), (img_size, img_size)), fill=None, outline=color, width=10)
+        img_full = img_full._image  # type: ignore
+        
+        c_x = (df_subset['tsne-2d-one'][i]-min_x)/x_axis_range*0.8+0.025
+        c_y = (df_subset['tsne-2d-two'][i]-min_y)/y_axis_range*0.8+0.025
+        
+        newax = fig.add_axes([c_x-size/2,c_y-size/2,size,size], anchor='NE', zorder=1)
+        newax.imshow(img_full)
+        newax.axis('off')
+        
+        
+    ax.set_xlabel('tSNE-2d-one', fontsize=15)
+    ax.set_ylabel('tSNE-2d-two', fontsize=15)
+    ax.set_title(f'tSNE embedding space with images', fontsize=20)
+    ax.axis('off')
+    
+    # Move legend
+    box = ax.get_position()
+    ax.set_position([box.x0, box.y0, box.width * 0.9, box.height])  
+    
+    legend_elements = []
+    for i in range(len(unique_classes)):
+        col = palette[class_to_color_map[unique_classes[i]]]
+        line = Line2D([0], [0], color=col, label=unique_classes[i], markersize=0,linewidth=3)
+        legend_elements.append(line)
+    
+    fig.legend(handles=legend_elements, loc='center', bbox_to_anchor=(0.91, 0.55))
+
+    plt.close()
+    
+    # PCA plot
+    fig2, ax2 = plt.subplots(1,1,figsize=(12,7))
+    min_x = min(df_subset['pca-one'])*1.15
+    max_x = max(df_subset['pca-one'])*1.15
+    min_y = min(df_subset['pca-two'])*1.15
+    max_y = max(df_subset['pca-two'])*1.15
+    ax2.set_xlim(min_x,max_x)
+    ax2.set_ylim(min_y,max_y)
+    
+    x_axis_range = max_x-min_x
+    y_axis_range = max_y-min_y
+    
+    for i in rand_idx:
+        color = palette[class_to_color_map[classes[i]]]
+        color = tuple(np.round(np.array(color)*256).astype(int).tolist())
+        img = Image.open(path+'/'+objects[i]).convert("RGB")
+        img_bbox = img.crop(bbox[i])
+        img_resize = img_bbox.resize((img_size,img_size))
+        img_full = ImageDraw.Draw(img_resize)
+        img_full.rectangle(((0, 0), (img_size, img_size)), fill=None, outline=color, width=10)
+        img_full = img_full._image  # type: ignore
+        
+        c_x = (df_subset['pca-one'][i]-min_x)/x_axis_range*0.8+0.025
+        c_y = (df_subset['pca-two'][i]-min_y)/y_axis_range*0.8+0.025
+        
+        newax = fig2.add_axes([c_x-size/2,c_y-size/2,size,size], anchor='NE', zorder=1)
+        newax.imshow(img_full)
+        newax.axis('off')
+        
+        
+    ax2.set_xlabel('PCA-one', fontsize=15)
+    ax2.set_ylabel('PCA-two', fontsize=15)
+    ax2.set_title(f'PCA embedding space with images', fontsize=20)
+    ax2.axis('off')
+    
+    # Move legend
+    box = ax2.get_position()
+    ax2.set_position([box.x0, box.y0, box.width * 0.9, box.height])  
+    
+    legend_elements = []
+    for i in range(len(unique_classes)):
+        col = palette[class_to_color_map[unique_classes[i]]]
+        line = Line2D([0], [0], color=col, label=unique_classes[i], markersize=0,linewidth=3)
+        legend_elements.append(line)
+    
+    fig2.legend(handles=legend_elements, loc='center', bbox_to_anchor=(0.91, 0.55))
+
+    plt.close()
+    
+    return fig, fig2

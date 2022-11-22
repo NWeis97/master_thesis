@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import ast
 from numpy import linalg as LA
-from src.utils.helper_functions import print_PCA_tSNE_plot
+from src.utils.helper_functions import print_PCA_tSNE_plot, print_tSNE_plot_with_images
 from src.loaders.generic_loader import image_object_full_bbox_resize_class
 from PIL import Image, ImageFont, ImageDraw, ImageEnhance
 import matplotlib.pyplot as plt
@@ -16,6 +16,7 @@ import matplotlib.lines as mlines
 import matplotlib.transforms as mtransforms
 from matplotlib.lines import Line2D
 import seaborn as sns
+from sklearn.manifold import TSNE
 
 
 
@@ -63,7 +64,9 @@ def main(args):
     UCE, UCE_fig, UCE_df = get_UCE(probs_df, true_classes,len(classifier.unique_classes))
     
     # AvU
-    AvU, AvU_df = get_AvU(probs_df, true_classes,len(classifier.unique_classes))
+    (AvU_simple_thresh, simple_thresh, AvU_simple_df, 
+     AvU_best_thresh, best_thresh, AvU_best_df,
+     AUC_AvU, ACr_list, ICr_list) = get_AvU(probs_df, true_classes,len(classifier.unique_classes))
     
     # Log simple measures
     wandb.log({'MaP':MaP,
@@ -77,7 +80,11 @@ def main(args):
                'SCE_m0': SCE_m0,
                'CECE': CECE,
                'UCE': UCE,
-               'AvU': AvU})
+               'AvU_simple_thresh': AvU_simple_thresh,
+               'AvU_best_thresh': AvU_best_thresh,
+               'Uncertainty_simple_thresh': simple_thresh,
+               'Uncertainty_best_thresh': best_thresh,
+               'AUC_AvU': AUC_AvU})
  
     # Log class specific metrics
     class_metrics = pd.DataFrame({'Average precision': aP_df,
@@ -90,7 +97,10 @@ def main(args):
     wandb.log({'Class Metrics': wandb.Table(dataframe=class_metrics),
                'Class Calibration': wandb.Table(dataframe=cali_plot_df.reset_index()),
                'Uncertainty Calibration': wandb.Table(dataframe=UCE_df),
-               'AvU_df': wandb.Table(dataframe=AvU_df.reset_index().rename(columns={'index':'Accuracy'}))})
+               'AvU_simple_df': wandb.Table(dataframe=AvU_simple_df.reset_index()
+                                                                   .rename(columns={'index':'Accuracy'})),
+               'AvU_best_df': wandb.Table(dataframe=AvU_best_df.reset_index()
+                                                               .rename(columns={'index':'Accuracy'}))})
     
     # Get confusion matrix
     pred_classes = probs_df.idxmax(0)
@@ -107,8 +117,11 @@ def main(args):
     
     # Log illustration of embedding space with classes
     fig_tsne_test, fig_pca_test = visualize_embedding_space(classifier)
+    fig_tsne_images, fig_pca_images = visualize_embedding_space_with_images(classifier)
     wandb.log({'fig_tsne_test': wandb.Image(fig_tsne_test),
                'fig_pca_test' : wandb.Image(fig_pca_test),
+               'fig_tsne_images': wandb.Image(fig_tsne_images),
+               'fig_pca_images' : wandb.Image(fig_pca_images),
                'Calibration plots': wandb.Image(cali_plots),
                'Uncertainty calibration plots': wandb.Image(UCE_fig)})
     
@@ -180,7 +193,7 @@ def main(args):
     fig_aP = precision_recall_plots(aP_plotting, aP_df)
     wandb.log({'Preicison/recall plots': wandb.Image(fig_aP)})
     
-    # Confidence vs. accuracy table
+    # Confidence vs. accuracy table 
     conf_vs_acc_df = confidence_vs_accuracy(probs_df, true_classes)
     for i in range(len(conf_vs_acc_df['Confidence'])):
         wandb.log({'Confidence vs. accuracy_conf': conf_vs_acc_df['Confidence'][i],
@@ -200,7 +213,14 @@ def main(args):
         wandb.log({'Uncertain when inaccurate_thresh_unc': uncert_inacc_df['uncertainty'][i],
                    'Uncertain when inaccurate_frac_unc': uncert_inacc_df['Frac_uncertain'][i]})
     
-    
+    # Accuray_Certain_rate vs Inaccurate_Certain_rate
+    for i in range(len(ACr_list)):
+        wandb.log({'Accurat_certain_ratio': ACr_list[i],
+                   'Inaccurat_certain_ratio': ICr_list[i]})
+
+
+
+
 
 def visualize_embedding_space(classifier: ImageClassifier):
     # Extract embeddings for 30 objects from same class in embedding space
@@ -433,13 +453,7 @@ def confidence_vs_accuracy(probs_df: pd.DataFrame,
     return conf_acc_df
 
 def _get_entropy_(probs,num_classes):
-    uncert_min = 0
-    uncert_max = -1/num_classes*np.log(1/num_classes)
-    ui = np.abs(-np.sum(probs*np.log(probs))/num_classes)
-    
-    # Normalize uncertainty 
-    ui = (ui - uncert_min)/(uncert_max - uncert_min)
-    
+    ui = np.abs(-np.sum(probs*np.log(probs))/np.log(num_classes))
     return ui
 
 def _get_uncertainties_(probs_df: pd.DataFrame,
@@ -617,26 +631,33 @@ def get_AvU(probs_df: pd.DataFrame,
     inacc_uncert = np.mean(uncertainty[idx_inacc])
     
     # Find threshold
-    u_thresh = (acc_uncert + inacc_uncert)/2
+    simple_thresh = (acc_uncert + inacc_uncert)/2
     
     # Calculate measures
-    nAU = np.sum(idx_acc & (uncertainty > u_thresh))
-    nAC = np.sum(idx_acc & (uncertainty <= u_thresh))
-    nIU = np.sum(idx_inacc & (uncertainty > u_thresh))
-    nIC = np.sum(idx_inacc & (uncertainty <= u_thresh))
+    nAU = np.sum(idx_acc & (uncertainty > simple_thresh))
+    nAC = np.sum(idx_acc & (uncertainty <= simple_thresh))
+    nIU = np.sum(idx_inacc & (uncertainty > simple_thresh))
+    nIC = np.sum(idx_inacc & (uncertainty <= simple_thresh))
     
     # Calc AvU score
-    AvU = (nAC+nIU)/(nAC+nAU+nIC+nIU)
+    AvU_simple_thresh = (nAC+nIU)/(nAC+nAU+nIC+nIU)
     
-    AvU_df = pd.DataFrame(index=['Accurate','Inaccurate'], columns=['Certain','Uncertain'])
-    AvU_df.loc['Accurate','Certain'] = nAC
-    AvU_df.loc['Inaccurate','Certain'] = nIC
-    AvU_df.loc['Accurate','Uncertain'] = nAU
-    AvU_df.loc['Inaccurate','Uncertain'] = nIU
+    AvU_simple_df = pd.DataFrame(index=['Accurate','Inaccurate'], columns=['Certain','Uncertain'])
+    AvU_simple_df.loc['Accurate','Certain'] = nAC
+    AvU_simple_df.loc['Inaccurate','Certain'] = nIC
+    AvU_simple_df.loc['Accurate','Uncertain'] = nAU
+    AvU_simple_df.loc['Inaccurate','Uncertain'] = nIU
     
     # Calc AUC for AvU
-    ACr_list = []
-    ICr_list = []
+    ACr_list = [0]
+    ICr_list = [0]
+    
+    # Find best AvU score
+    AvU_best_thresh = 0
+    best_thresh = 0
+    
+    # Best df
+    AvU_best_df = pd.DataFrame(index=['Accurate','Inaccurate'], columns=['Certain','Uncertain'])
     for u_thresh in uncertainty_unique:
         nAU = np.sum(idx_acc & (uncertainty > u_thresh))
         nAC = np.sum(idx_acc & (uncertainty <= u_thresh))
@@ -651,13 +672,72 @@ def get_AvU(probs_df: pd.DataFrame,
         
         # Append to lists
         ACr_list.append(ACr)
-        ACr_list.append(ICr)
+        ICr_list.append(ICr)
         
-        
+        # Store best AvU
+        if (nAC+nIU)/(nAC+nAU+nIC+nIU) > AvU_best_thresh:
+            AvU_best_thresh = (nAC+nIU)/(nAC+nAU+nIC+nIU)
+            best_thresh = u_thresh
+            AvU_best_df.loc['Accurate','Certain'] = nAC
+            AvU_best_df.loc['Inaccurate','Certain'] = nIC
+            AvU_best_df.loc['Accurate','Uncertain'] = nAU
+            AvU_best_df.loc['Inaccurate','Uncertain'] = nIU
+    
+    AUC_AvU = get_AUC_AvU(np.array(ACr_list), np.array(ICr_list))
+    
+
+    return (AvU_simple_thresh, simple_thresh, AvU_simple_df, 
+            AvU_best_thresh, best_thresh, AvU_best_df,
+            AUC_AvU, ACr_list, ICr_list)
     
     
-    return AvU, AvU_df
     
+def get_AUC_AvU(ACr: np.array,
+                ICr: np.array):
+    AUC = 0
+    for i in range(len(ICr)-1):
+        AUC += (ACr[i]+ACr[i+1])/2*(ICr[i+1]-ICr[i])
+
+    return AUC
+
+
+
+
+def visualize_embedding_space_with_images(classifier: ImageClassifier):
+    # Extract embeddings for 10 objects from same class in embedding space
+    num_classes_samples = 3
+    classes_unique = (np.sort(pd.unique(classifier.classes)))
+    classes = []
+    
+    objects_list = classifier.objects
+    bboxs_list = classifier.bbox
+    means_list = classifier.means.to('cpu').numpy()
+    vars_list = classifier.vars.to('cpu').numpy()
+    classes_list = np.array(classifier.classes)
+    
+    means = np.zeros((means_list.shape[0], num_classes_samples*len(classes_unique)))
+    vars = np.zeros((num_classes_samples*len(classes_unique),))
+    objects = []
+    bboxs = []
+    
+    count = 0
+    for class_ in classes_unique:
+        class_idxs = np.where(classes_list == class_)[0]
+        rand_idx_of_class = np.random.choice(class_idxs,num_classes_samples)
+        for idx in rand_idx_of_class:
+            means[:,count] = means_list[:,idx]
+            vars[count] = vars_list[idx]
+            classes.append(classes_list[idx])
+            objects.append(objects_list[idx])
+            bboxs.append(bboxs_list[idx])
+            count += 1
+    
+    
+    path_to_img = './data/raw/JPEGImages/'
+    fig1, fig2 = print_tSNE_plot_with_images(means, objects, bboxs, classes, 
+                                             classifier.params['img_size'], path_to_img)
+
+    return fig1, fig2
 
 if __name__ == '__main__':
     
