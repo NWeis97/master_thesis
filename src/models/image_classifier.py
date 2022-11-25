@@ -129,10 +129,10 @@ class ImageClassifier():
         # Find means and variances of model data
         self.model.cuda()
         self.model.eval()
-
         file_name = (f'./models/embeddings/{model}_{model_data}_'+
                                         f'{str(balanced_classes)}_'+
-                                        f'withOOD{self.with_OOD}_')
+                                        f'withOOD{self.with_OOD}_'+
+                                        f'varType-{self.model.var_type}_')
         if exists(file_name+'means.pt') == False:
             self.means, self.vars, self.classes = self._extract_means_and_variances_()
             torch.save(self.means,file_name+'means.pt')
@@ -221,16 +221,21 @@ class ImageClassifier():
         logger.info("Extract means and variance for model data")
 
         # extract means and variances 
+        if self.model.var_type == 'iso':
+            var_dim = 1
+        else:
+            var_dim = int(self.params['dim_out']/2)
+            
         with torch.no_grad():
             if self.balanced_classes < 1:
                 logger.info("No balancing of classes")
-                qvecs = torch.zeros(self.params['dim_out']-1, len(self.objects)).cuda()
-                qvars = torch.zeros(len(self.objects),).cuda()
+                qvecs = torch.zeros(self.params['dim_out']-var_dim, len(self.objects)).cuda()
+                qvars = torch.zeros(var_dim,len(self.objects)).cuda()
             
                 for i, input in enumerate(loader):
                     output = self.model(input.cuda()).data.squeeze()
-                    qvecs[:, i] = output[:-1]
-                    qvars[i] = output[-1]
+                    qvecs[:, i] = output[:-var_dim]
+                    qvars[:, i] = output[-var_dim:]
                     if (i+1) % 1000 == 0 or (i+1) == len(self.objects):
                         logger.info('>>>> {}/{} done... '.format(i+1, len(self.objects)))
             
@@ -241,8 +246,8 @@ class ImageClassifier():
                             f"{self.balanced_classes}")
                 dist_of_classes = pd.value_counts(self.classes)
                 num_samples = len(dist_of_classes)*self.balanced_classes
-                qvecs = torch.zeros(self.params['dim_out']-1, num_samples).cuda()
-                qvars = torch.zeros(num_samples,).cuda()
+                qvecs = torch.zeros(self.params['dim_out']-var_dim, num_samples).cuda()
+                qvars = torch.zeros(var_dim,num_samples).cuda()
                 
                 # for track-keeping
                 classes_count = {dist_of_classes.index[i]:0 for i in range(len(dist_of_classes))}
@@ -263,8 +268,8 @@ class ImageClassifier():
                             # save output
                             input = input[None,:,:,:]
                             output = self.model(input.cuda()).data.squeeze()
-                            qvecs[:, count] = output[:-1]
-                            qvars[count] = output[-1]
+                            qvecs[:, count] = output[:-var_dim]
+                            qvars[:,count] = output[-var_dim:]
                             
                             # add counts and class
                             classes.append(sample_class)
@@ -299,10 +304,15 @@ class ImageClassifier():
         img_path = self.ims_root + f'/{img_name}'
         img = image_object_loader(img_path,bbox,self.transformer)
         img = img[None,:,:,:] #Expand dim
+        if self.model.var_type == 'iso':
+            var_dim = 1
+        else:
+            var_dim = int(self.params['dim_out']/2)
+            
         with torch.no_grad():
             output = self.model(img.cuda()).data.squeeze()
-            mean_emb = output[:-1]
-            var_emb = output[-1]
+            mean_emb = output[:-var_dim]
+            var_emb = output[-var_dim:]
         
         return mean_emb, var_emb
     
@@ -334,18 +344,8 @@ class ImageClassifier():
         _, ranks = torch.sort(dist, dim=0, descending=False)
         if method == 'min_dist_NN':    
             probs = self._min_dist_NN_(ranks, mean_emb, var_emb, num_NN, num_MC)
-        elif method == 'avg_dist_rand':
-            probs = self._avg_dist_rand_(mean_emb, var_emb, num_NN, num_MC)
-        elif method == 'avg_dist_NN_pr_class':
-            probs = self._avg_dist_NN_pr_class_(ranks, mean_emb, var_emb, num_NN, num_MC)
-        elif method == 'min_dist_NN_pr_class':
-            probs = self._min_dist_NN_pr_class_(ranks, mean_emb, var_emb, num_NN, num_MC)
-        elif method =='avg_dist_NN_cap_class_NN':    
-            probs = self._avg_dist_NN_cap_class_NN_(ranks, mean_emb, var_emb, num_NN, num_MC)
-        elif method =='min_dist_NN_cap_class_NN':    
-            probs = self._min_dist_NN_cap_class_NN_(ranks, mean_emb, var_emb, num_NN, num_MC)
-        elif method =='min_dist_NN_with_min_dist_rand':
-            probs = self._min_dist_NN_with_min_dist_rand_(ranks, mean_emb, var_emb, num_NN, num_MC)
+        elif method == 'kNN_gauss_kernel':
+            probs = self._kNN_gauss_kernel_(mean_emb, var_emb, num_NN, num_MC)
         else:
             raise ValueError('Method does not exist')
 
@@ -390,7 +390,8 @@ class ImageClassifier():
         file_name = (f'{self.model_name}_{self.model_data}_'+
                         f'{self.balanced_classes}_numNN{num_NN}_'+
                         f'numMC{num_MC}_{method}_{test_dataset}_'+
-                        f'withOOD{self.with_OOD}')
+                        f'withOOD{self.with_OOD}'+
+                        f'varType-{self.model.var_type}')
         file_name_probs = f'./reports/probability_distributions/' + file_name + '.csv'
         file_name_embs = f'./reports/embeddings_test/' + file_name
         if exists(file_name_probs) == False:
@@ -668,46 +669,56 @@ class ImageClassifier():
                 if class_probs_in_bin_true.size != 0:
                     cali_plot_df_acc.loc[bins_mid[i],class_] = np.mean(class_probs_in_bin_true)
                     cali_plot_df_acc.loc[bins_mid[i],'All'] += np.sum(class_probs_in_bin_true)
-                    cali_plot_df_conf.loc[bins_mid[i],class_] = np.mean(class_probs_in_bin_true)
-                    cali_plot_df_conf.loc[bins_mid[i],'All'] += np.sum(class_probs_in_bin_true)
+                    cali_plot_df_conf.loc[bins_mid[i],class_] = np.mean(class_probs[class_probs_in_bin])
+                    cali_plot_df_conf.loc[bins_mid[i],'All'] += np.sum(class_probs[class_probs_in_bin])
                     num_each_bin_df.loc[bins_mid[i],class_] = np.sum(class_probs_in_bin)
                     num_each_bin_df.loc[bins_mid[i],'All'] += np.sum(class_probs_in_bin)
-
-        # Calc accuracy for all images
-        cali_plot_df['All'] = cali_plot_df['All']/num_each_bin_df['All']
         
-        # Calculate non-weighted mean across accuracies
-        cali_plot_df['Class_mean'] = cali_plot_df.iloc[:,:-1].mean(axis=1)
+        # Calc accuracy and conf across all images (WECE)
+        cali_plot_df_acc['All'] = cali_plot_df_acc['All']/num_each_bin_df['All']
+        cali_plot_df_conf['All'] = cali_plot_df_conf['All']/num_each_bin_df['All']
+        
+        # Calculate non-weighted mean across accuracies (AECE)
+        cali_plot_df_acc['Class_mean'] = cali_plot_df_acc.iloc[:,:-1].mean(axis=1)
+        cali_plot_df_conf['Class_mean'] = cali_plot_df_conf.iloc[:,:-1].mean(axis=1)
         num_each_bin_df['Class_mean'] = num_each_bin_df['All']
         
         # Calaculate ECE across weighted and non-weighted accuracies
         # SCE:
         # https://medium.com/codex/metrics-to-measuring-calibration-in-deep-learning-36b0b11fe816
-        pdb.set_trace()
-        WECE = self._calc_ECE_(cali_plot_df['All'], num_each_bin_df['All'])
-        AECE = self._calc_ECE_(cali_plot_df['Class_mean'], num_each_bin_df['All'])
-        CECE, CECE_df = self._calc_CECE_(cali_plot_df.iloc[:,:-2],num_each_bin_df.iloc[:,:-2])
+        WECE = self._calc_ECE_(cali_plot_df_acc['All'], 
+                               cali_plot_df_conf['All'], 
+                               num_each_bin_df['All'])
+        AECE = self._calc_ECE_(cali_plot_df_acc['Class_mean'],
+                               cali_plot_df_conf['Class_mean'],
+                               num_each_bin_df['All'])
+        CECE, CECE_df = self._calc_CECE_(cali_plot_df_acc.iloc[:,:-2],
+                                         cali_plot_df_conf.iloc[:,:-2],
+                                         num_each_bin_df.iloc[:,:-2])
         
-        return (cali_plot_df, WECE, AECE, CECE, CECE_df, num_each_bin_df)
+        return (cali_plot_df_acc, cali_plot_df_conf, WECE, 
+                AECE, CECE, CECE_df, num_each_bin_df)
     
     
     def _calc_ECE_(self, accuracies: pd.Series,
+                         confidences: pd.Series,
                          num_samples_bins: pd.Series):
         n = num_samples_bins.sum()
-        ECE = (num_samples_bins/n*np.abs(accuracies-accuracies.index)).sum()
+        ECE = (num_samples_bins/n*np.abs(accuracies-confidences)).sum()
         
         return ECE
 
  
     def _calc_CECE_(self, accuracies: pd.DataFrame,
+                          confidences: pd.DataFrame,
                           num_samples_bins: pd.DataFrame):
         CECE_df = pd.Series(index=accuracies.columns)
+        
         for i in range(len(accuracies.columns)):
-            
             class_ = accuracies.columns[i]
             n = num_samples_bins[class_].sum()
             CECE_df[class_] = ((num_samples_bins[class_]/n*
-                                np.abs(accuracies[class_]-accuracies.index)).sum())
+                                np.abs(accuracies[class_]-confidences[class_])).sum())
             
         CECE = CECE_df.mean()
         return CECE, CECE_df
@@ -745,7 +756,50 @@ class ImageClassifier():
     
     
     
+    def _min_dist_NN_(self, ranks, mean_emb, var_emb, num_NN, num_MC):
+        # extract num_NN nearest neighbours
+        ranks = ranks[:num_NN]
+
+        # Extract means, variance, and classes
+        means_NN = self.means[:,ranks].cuda()
+        vars_NN = self.vars[:,ranks].cuda()
+        classes_NN = [self.classes[i] for i in ranks]
+        
+        if self.model.var_type == 'iso':
+            vars_NN = (torch.Tensor.repeat(vars_NN.flatten(),mean_emb.shape[0])
+                                   .reshape(mean_emb.shape[0],-1))
+            var_emb = (torch.Tensor.repeat(var_emb.flatten(),mean_emb.shape[0])
+                                   .reshape(mean_emb.shape[0],))
+        
+        emb_samples = torch.distributions.Normal(mean_emb,var_emb).rsample(torch.Size((num_MC,)))
+        rank_samples = (torch.distributions.Normal(means_NN.T.flatten(),vars_NN.T.flatten()).rsample(torch.Size((num_MC,)))
+                                                  .reshape(num_MC,mean_emb.shape[0],-1))
+        
+        rank_samples = rank_samples.permute(2, 0, 1)
+        dist_to_NN = (torch.sub(rank_samples,emb_samples)).pow(2).sum(2)
     
+        """ OLD
+        # Calc scaled non-centered chi-sq dists parameters
+        scaling = var_emb + vars_NN
+        delta = (mean_emb - means_NN.T).T
+        nonc = (scaling**(-1)*torch.diag(torch.matmul(delta.T,delta))).cpu().numpy()
+        nonc = np.repeat(nonc,num_MC).reshape(num_NN,num_MC).T
+        df = len(mean_emb)
+        df = np.repeat(df,num_NN*num_MC).reshape(num_NN,num_MC).T
+        
+        # Sample dist
+        dist_to_NN = (scaling*torch.Tensor(noncentral_chisquare(df,nonc,)).cuda()).T
+        """
+        
+        # Find smallest distance to image
+        _, indx_min = torch.min(dist_to_NN,0)
+        indx_class, counts = indx_min.unique(return_counts=True)
+        counts = counts.cpu()/num_MC
+        probs = {key:0 for key in np.unique(self.classes)}
+        for i in range(len(counts)):
+            probs[classes_NN[indx_class[i].item()]]+=counts[i].item()
+        
+        return probs
     
     def _min_dist_NN_test_time_sampling_(self, ranks, mean_emb, var_emb):
         import time

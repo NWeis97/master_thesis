@@ -1,5 +1,4 @@
 # Standard libraries
-from sqlite3 import paramstyle
 import wandb
 import json
 import time
@@ -12,7 +11,6 @@ import os
 import configparser
 import argparse
 import shutil
-import glob
 
 # Own libraries
 from src.loaders.tuple_loader import TuplesDataset
@@ -20,11 +18,11 @@ from src.loaders.tuple_loader2 import TuplesDataset_2class
 from src.models.image_classification_network import ImageClassifierNet, init_network
 from src.loss_functions.bayesian_triplet_loss import BayesianTripletLoss
 from src.loaders.tuple_loader import TuplesDataset
-from src.utils.helper_functions import (AverageMeter, 
-                                        print_PCA_tSNE_plot, 
+from src.utils.helper_functions import (AverageMeter,  
                                         collate_tuples,
                                         check_config,
                                         get_logger)
+from src.visualization.visualize import print_PCA_tSNE_plot
         
 def train(train_loader, model, criterion, optimizer, epoch, update_every, print_freq, clip):
     batch_time = AverageMeter()
@@ -239,7 +237,8 @@ def main(config):
                         'num_classes': int(dataset_conf['num_classes']),
                         'img_size': int(img_conf['img_size']),
                         'normalize_mv' : ast.literal_eval(img_conf['normalize']),
-                        'var_prior': float(hyper_conf['var_prior'])}
+                        'var_prior': float(hyper_conf['var_prior']),
+                        'var_type': ast.literal_eval(model_conf['var_type'])}
     net = init_network(params)
     net.cuda()
     

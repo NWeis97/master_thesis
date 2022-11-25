@@ -40,6 +40,7 @@ class ImageClassifierNet(nn.Module):
         self.dropout_p = meta['dropout']
         self.const_eval_mode = meta['const_eval_mode']
         self.fixed_backbone = meta['fixed_backbone']
+        self.var_type = meta['var_type']
         self.meta = meta
 
         # Activation function
@@ -91,8 +92,14 @@ class ImageClassifierNet(nn.Module):
             self.var_batchnorm.append(nn.BatchNorm1d(layer))
     
         # Output layers
-        self.mean_out = nn.Linear(self.mean_layers_dim[-1],self.outputdim-1)
-        self.var_out = nn.Linear(self.var_layers_dim[-1],1)
+        if self.var_type == 'iso':
+            self.mean_out = nn.Linear(self.mean_layers_dim[-1],self.outputdim-1)
+            self.var_out = nn.Linear(self.var_layers_dim[-1],1)
+        elif self.var_type == 'diag':
+            self.mean_out = nn.Linear(self.mean_layers_dim[-1],int(self.outputdim/2))
+            self.var_out = nn.Linear(self.var_layers_dim[-1],int(self.outputdim/2))
+        else:
+            raise ValueError('Var_type not recognized: use either "iso" or "diag"')
 
         # Reguralization
         self.dropout = nn.Dropout(self.dropout_p)
@@ -157,6 +164,7 @@ class ImageClassifierNet(nn.Module):
         tmpstr += '     activation_fn_param: {}\n'.format(self.meta['activation_fn']['param'])
         tmpstr += '     outputdim_bb: {}\n'.format(self.outputdim_bb)
         tmpstr += '     outputdim: {}\n'.format(self.outputdim)
+        tmpstr += '     var_type: {}\n'.format(self.var_type)
         tmpstr = tmpstr + '  )\n'
         return tmpstr
 
@@ -208,6 +216,7 @@ def init_network(params: dict):
     pooling = params.get('pooling',{'mGeM_p':3,'vGeM_p':3})
     dim_out = params.get('dim_out', 50)
     dropout = params.get('dropout', 0.25)
+    var_type = params.get('var_type', "iso")
     
     # get output dimensionality size
     dim = OUTPUT_DIM[architecture]
@@ -247,7 +256,8 @@ def init_network(params: dict):
         'pooling': pooling,
         'outputdim_bb' : dim,
         'outputdim': dim_out,
-        'dropout': dropout
+        'dropout': dropout,
+        'var_type': var_type
     }
 
     # create a generic image retrieval network

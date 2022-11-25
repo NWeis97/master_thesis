@@ -9,11 +9,7 @@ export num_NN=200
 export num_MC=1000
 export method=min_dist_NN
 export with_OOD=False
-###min_dist_NN_pr_class
-###min_dist_NN_cap_class_NN
-###min_dist_NN_with_min_dist_rand
-###avg_dist_rand
-###min_dist_NN
+#kNN_gauss_kernel
 
 ### NAME OF FILE
 #BSUB -J config_test1
