@@ -102,8 +102,8 @@ def check_config(config):
     
     return config_filename, config_run_no
     
-    
-def get_logger(config_filename: str, config_run_no: str):
+
+def get_logger_old(config_filename: str, config_run_no: str):
     """This function defines and returns logger that save output to file in path:
        './logs/training_test/train_model/{config_filename}/run_{config_run_no}.logs'
 
@@ -125,6 +125,32 @@ def get_logger(config_filename: str, config_run_no: str):
     logger = logging.getLogger() 
     file_handler = logging.FileHandler(f'./logs/training_test/train_model/{str(config_filename)}/'+
                                        f'run_{str(config_run_no)}.log')
+    file_handler.setFormatter(logging.Formatter(log_file_fmt))
+    logger.addHandler(file_handler)
+    logging.getLogger('matplotlib.font_manager').setLevel(logging.ERROR)
+    logging.getLogger('matplotlib.pyplot').setLevel(logging.ERROR)
+    
+    return logger
+
+def get_logger(name: str):
+    """This function defines and returns logger that save output to file in path:
+       './logs/training_test/train_model/{name}.logs'
+
+    Args:
+        name (str): name of test
+
+    Returns:
+       logger (Logger): A logger for logging
+    """
+    # Define logger
+    log_fmt = '%(message)s'
+    log_file_fmt = '%(asctime)s - %(name)s - %(levelname)s:\n\t%(message)s'
+    logging.basicConfig(filemode='a',
+                        format=log_fmt,
+                        datefmt='%d/%m/%Y %H:%M:%S',
+                        level=logging.DEBUG)
+    logger = logging.getLogger() 
+    file_handler = logging.FileHandler(f'./logs/training_test/train_model/{name}.log')
     file_handler.setFormatter(logging.Formatter(log_file_fmt))
     logger.addHandler(file_handler)
     logging.getLogger('matplotlib.font_manager').setLevel(logging.ERROR)

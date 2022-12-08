@@ -1,10 +1,7 @@
 # Imports
 import numpy as np
 import torch
-
-
-
-
+import pdb
 
 def get_idxs_of_true_and_false_classifications(pred_classes: list, true_classes: list):
     img_true = []
@@ -31,12 +28,14 @@ def get_idxs_of_true_and_false_classifications(pred_classes: list, true_classes:
     return idx_true, idx_false
 
 
-def sort_idx_on_var_per_class(vars, classes):
+def sort_idx_on_metric_per_class(metric, classes):
     classes_unique = np.sort(np.unique(classes))
     dict_vars = {class_:{} for class_ in classes_unique}
     for i, class_ in enumerate(classes):
-        dict_vars[class_][i]=torch.mean(vars[i]).item()
-        
+        if type(metric) == torch.Tensor:
+            dict_vars[class_][i]=torch.mean(metric[:,i]).item()
+        else:
+            dict_vars[class_][i]=metric[i]
     for key in dict_vars.keys():
         dict_vars[key] = dict(sorted(dict_vars[key].items(), key=lambda item: item[1]))
     

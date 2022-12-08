@@ -5,6 +5,7 @@ import time
 from torchvision import transforms
 import numpy as np
 import torch
+import torch.nn as nn
 import pdb
 import ast
 import os
@@ -15,7 +16,8 @@ import shutil
 # Own libraries
 from src.loaders.tuple_loader import TuplesDataset
 from src.loaders.tuple_loader2 import TuplesDataset_2class
-from src.models.image_classification_network import ImageClassifierNet, init_network
+from src.models.image_classification_network import (ImageClassifierNet_BayesianTripletLoss, 
+                                                     init_network)
 from src.loss_functions.bayesian_triplet_loss import BayesianTripletLoss
 from src.loaders.tuple_loader import TuplesDataset
 from src.utils.helper_functions import (AverageMeter,  
@@ -132,7 +134,45 @@ def validate(val_loader, model, criterion, epoch, print_freq):
 
     return losses.avg, nll_losses.avg, kl_losses.avg
             
+            
+# https://kozodoi.me/python/deep%20learning/pytorch/tutorial/2022/03/29/discriminative-lr.html
+def parameters_update_lr(net: nn.Module,
+                         lr_optim: float):
+    lr_mult = 0.8
+    pdb.set_trace()
+    # save layer names
+    layer_names = []
+    for idx, (name, param) in enumerate(net.named_parameters()):
+        layer_names.append(name)
+        
+    layer_names.reverse()
+    
+    # placeholder
+    parameters      = []
+    prev_group_name = layer_names[0].split('.')[1]
+    
+    backbone_model = 0
 
+    # store params & learning rates
+    for idx, name in enumerate(layer_names):
+        
+        # parameter group name
+        backbone_or_heads = name.split('.')[0]
+        cur_group_name = name.split('.')[1]
+        
+        # update learning rate
+        if (cur_group_name != prev_group_name) & (backbone_or_heads == 'features'):
+            if backbone_model == 0:
+                lr_optim *= 0.01
+                backbone_model = 1
+            lr_optim *= lr_mult
+        prev_group_name = cur_group_name
+        
+        # append layer parameters
+        parameters += [{'params': [p for n, p in net.named_parameters() if n == name and p.requires_grad],
+                        'lr':     lr_optim}]
+    
+    return parameters
 
 def main(config):
     # **********************************
@@ -202,31 +242,33 @@ def main(config):
     
     # Make datasets
     logger.info(">> Initilizing datasets")
-    num_classes = int(dataset_conf['num_classes'])
+    classes_not_trained_on = ast.literal_eval(dataset_conf['classes_not_trained_on'])
+    num_classes = 20 - len(classes_not_trained_on)
     nnum = int(dataset_conf['nnum'])
     ds_train = TuplesDataset_2class(mode='train', 
-                                    nnum=nnum, 
-                                    qsize_class=int(dataset_conf['qsize_class']),
-                                    poolsize=int(dataset_conf['poolsize']),
-                                    transform=transformer_train,
-                                    keep_prev_tuples=ast.literal_eval(dataset_conf['keep_prev_tuples']),
-                                    num_classes=num_classes,
-                                    approx_similarity=ast.literal_eval(dataset_conf['approx_similarity']))
+                            nnum=nnum, 
+                            qsize_class=int(dataset_conf['qsize_class']),
+                            poolsize=int(dataset_conf['poolsize']),
+                            transform=transformer_train,
+                            keep_prev_tuples=ast.literal_eval(dataset_conf['keep_prev_tuples']),
+                            classes_not_trained_on=classes_not_trained_on,
+                            approx_similarity=ast.literal_eval(dataset_conf['approx_similarity']))
     ds_val = TuplesDataset_2class(mode='val', 
-                                  nnum=nnum, 
-                                  qsize_class=int(dataset_conf['qsize_class']),
-                                  poolsize=int(dataset_conf['poolsize']),
-                                  transform=transformer_valid,
-                                  keep_prev_tuples=False,
-                                  num_classes=num_classes,
-                                  approx_similarity=ast.literal_eval(dataset_conf['approx_similarity']))
+                              nnum=nnum, 
+                              qsize_class=int(dataset_conf['qsize_class']),
+                              poolsize=int(dataset_conf['poolsize']),
+                              transform=transformer_valid,
+                              keep_prev_tuples=False,
+                              classes_not_trained_on=classes_not_trained_on,
+                              approx_similarity=ast.literal_eval(dataset_conf['approx_similarity']))
     
     
     # ************************************* 
     # ******** Initialize model ***********
     # *************************************
     logger.info(">> Initilizing model")
-    params = {'architecture':ast.literal_eval(model_conf['architecture']),
+    params = {'model_type': 'BayesianTripletLoss',          
+                        'architecture':ast.literal_eval(model_conf['architecture']),
                         'fixed_backbone': ast.literal_eval(model_conf['fixed_backbone']),
                         'const_eval_mode': ast.literal_eval(model_conf['const_eval_mode']),
                         'head_layers_dim': ast.literal_eval(model_conf['head_layers_dim']),
@@ -234,12 +276,12 @@ def main(config):
                         'pooling': ast.literal_eval(model_conf['pooling']),
                         'dim_out': int(model_conf['dim_out']),
                         'dropout': float(model_conf['dropout']),
-                        'num_classes': int(dataset_conf['num_classes']),
+                        'classes_not_trained_on': classes_not_trained_on,
                         'img_size': int(img_conf['img_size']),
                         'normalize_mv' : ast.literal_eval(img_conf['normalize']),
                         'var_prior': float(hyper_conf['var_prior']),
                         'var_type': ast.literal_eval(model_conf['var_type'])}
-    net = init_network(params)
+    net = init_network('BayesianTripletLoss',params)
     net.cuda()
     
     # Save parameters to json file
@@ -330,7 +372,8 @@ def main(config):
                                             varPrior=var_prior,
                                             kl_scale_factor=kl_scale_factor)
         lr_optim = lr_init+(lr_diff*(max(0,i+1-kl_warmup)))
-        optim = torch.optim.AdamW(net.parameters(), lr=lr_optim, weight_decay=1e-1,)
+        parameters = parameters_update_lr(net,lr_optim)
+        optim = torch.optim.AdamW(parameters, weight_decay=1e-1,)
 
         logger.info(f'Updating margin ({margin:.2e}) and kl_scale_factor ({kl_scale_factor:.2e})')
         

@@ -33,7 +33,7 @@ class TuplesDataset_2class(data.Dataset):
                                          to be processed in one epoch (for each class)
         poolsize (int, Default:3000): Pool size for negative images re-mining
         keep_prev_tuples (bool, Default:True): Should we keep tuples from previous generation?
-        num_classes (int, Default:6): How many classes should be trained on?
+        classes_not_trained_on (list, Default:[]): What classes should we not train on
         approx_similarity (bool, Default:True): Should the similarity measure be approximative (dot
                                                 product) or exact (l2-norm)
      
@@ -54,8 +54,8 @@ class TuplesDataset_2class(data.Dataset):
     """
 
     def __init__(self, mode: str, nnum: int=10, qsize_class: int=20, poolsize:int =3000, 
-                 transform: transforms=None, keep_prev_tuples: bool=True, num_classes: int=6,
-                 approx_similarity: bool=True):
+                 transform: transforms=None, keep_prev_tuples: bool=True, 
+                 classes_not_trained_on: list=[], approx_similarity: bool=True):
 
         if not (mode == 'train' or mode == 'val'):
             raise(RuntimeError("MODE should be either train or val, passed as string"))
@@ -78,11 +78,12 @@ class TuplesDataset_2class(data.Dataset):
         f.close()
         
         # Select subset of classes
-        self.num_classes = num_classes
+        self.classes_not_trained_on = classes_not_trained_on
         class_list = ['train','cow','tvmonitor','boat','cat','person','aeroplane','bird',
                       'dog','sheep','bicycle','bus','motorbike','bottle','chair',
                       'diningtable','pottedplant','sofa','horse','car']
-        db = {class_list[i]:db[class_list[i]] for i in range(self.num_classes)}
+        db = ({class_:db[class_] for class_ in class_list if 
+                                     class_ not in self.classes_not_trained_on})
         
         # Extract list of classes
         class_num = [[key]*len(db[key]) for key in db.keys()]

@@ -12,7 +12,6 @@ def negative_loglikelihood(muA, muP, muN, varA, varP, varN, margin = 0.0):
     varN2 = varN**2
 
     # Gaussian approximative mean
-    pdb.set_trace()
     mu = torch.sum(muP2 + varP - muN2 - varN - 2*muA*(muP - muN), dim=0)
 
     # Calc terms for distribution variance

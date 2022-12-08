@@ -1,14 +1,16 @@
 #!/bin/bash
 ### Settings for test run
 export R=11
-export model_name=ruby-forest-460
-export model_database=TRAINVAL
+export model_name=comic-capybara-1128
+export model_database=TRAIN
 export balanced_dataset=0
-export test_dataset=test
+export test_dataset=val
 export num_NN=200
 export num_MC=1000
 export method=min_dist_NN
 export with_OOD=False
+export dist_classes=all
+
 #kNN_gauss_kernel
 
 ### NAME OF FILE
@@ -37,4 +39,4 @@ rm config_hpc/config_test${R}.out
 rm config_hpc/config_test${R}.err
 source init.sh
 
-python3 src/training_test/test_classifier_model.py --model-name=${model_name} --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN} --num-MC=${num_MC} --method=${method} --with_OOD=${with_OOD}
+python3 src/training_test/test_classifier_model.py --model-name=${model_name} --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN} --num-MC=${num_MC} --method=${method} --with_OOD=${with_OOD} --dist_classes=${dist_classes}

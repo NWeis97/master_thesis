@@ -6,13 +6,13 @@ import pdb
 # Based on Warburg. F. et al. implementation https://arxiv.org/pdf/2011.12663.pdf
 
 class BayesianTripletLoss(nn.Module):
-    def __init__(self, margin, varPrior, kl_scale_factor = 1e-6, iso = True): 
+    def __init__(self, margin, varPrior, kl_scale_factor = 1e-6, var_type = 'iso'): 
         super(BayesianTripletLoss, self).__init__()
         
         self.margin = torch.tensor(margin).cuda()
         self.varPrior = torch.tensor(varPrior).cuda()
         self.kl_scale_factor = torch.tensor(kl_scale_factor).cuda()
-        self.iso = iso
+        self.var_type = var_type
     
     def forward(self, x, label):
 
@@ -25,7 +25,7 @@ class BayesianTripletLoss(nn.Module):
         N = x[:, label.data == 0]
 
         # Extract dim based on iso og diagonal gaussian
-        if self.iso:
+        if self.var_type == 'iso':
             D = A.shape[0]-1
         else:
             D = int(A.shape[0]/2)

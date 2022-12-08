@@ -1,16 +1,198 @@
 # Imports
 import pandas as pd
 import numpy as np
+import pdb
 
 # Own Imports
-from src.utils.performance_measures_helper_functions import (_get_entropy_,
-                                                             _get_uncertainties_,
-                                                             _get_AUC_AvU_)
+from src.utils.performance_measures_helper_functions import ( _get_uncertainties_,
+                                                             _get_AUC_AvU_,
+                                                             _calc_AUC_,
+                                                             _calc_aP_for_class_,
+                                                             _calc_ECE_,
+                                                             _calc_CECE_)
 from src.visualization.visualize import UCE_plots
 
 
+def calc_MaP(probs_df: pd.DataFrame, 
+             true_classes: list):
+        """Calculates both the mean average precision of the model, and the class specific 
+           average precisions (area under precision/recall curve)
 
+        Args:
+            probs_df (pd.DataFrame): probability distributions for all samples
+            true_classes (list): true classes
 
+        Returns:
+            MaP, acc_df: The mean average precision (MaP), and class specific precisions (aP_df)
+        """
+        true_classes_unique = pd.unique(true_classes)
+        aP_df = pd.Series(index=true_classes_unique)
+        aP_plotting = {'precision':{}, 'recall':{}, 'prec_AUC':{}, 'rec_AUC':{}}
+        for class_ in true_classes_unique:
+            aP_df[class_],prec,rec,prec_auc,rec_auc = _calc_aP_for_class_(probs_df,
+                                                                          true_classes,
+                                                                          class_)
+            aP_plotting['precision'][class_] = prec
+            aP_plotting['recall'][class_] = rec
+            aP_plotting['prec_AUC'][class_] = prec_auc
+            aP_plotting['rec_AUC'][class_] = rec_auc
+        
+        MaP = aP_df.mean()    
+        return MaP, aP_df, aP_plotting
+    
+    
+def calc_accuracy(probs_df: pd.DataFrame, 
+                  true_classes: list):
+    """Calculates both the overall accuracy of the model (picking the class with highest
+        probability), and the class specific accuracies. 
+
+    Args:
+        probs_df (pd.DataFrame): probability distributions for all samples
+        true_classes (list): list of true classes
+
+    Returns:
+        acc, acc_mean_class, acc_df: The accuracy of the model (acc), the mean across class
+                                        accuracies (acc_mean_class), 
+                                        and class specific accuracies (acc_df)
+    """
+    true_classes_unique = pd.unique(true_classes)
+    acc_df_top1 = pd.Series(np.zeros((len(true_classes_unique),)),index=true_classes_unique)
+    acc_df_top2 = pd.Series(np.zeros((len(true_classes_unique),)),index=true_classes_unique)
+    acc_df_top3 = pd.Series(np.zeros((len(true_classes_unique),)),index=true_classes_unique)
+    acc_df_top5 = pd.Series(np.zeros((len(true_classes_unique),)),index=true_classes_unique)
+    pred_classes = []
+    [pred_classes.append(list(probs_df.iloc[:,i].sort_values()[::-1].index[:5])) for i in 
+                            range(len(probs_df.columns))]
+
+    for i, classes in enumerate(pred_classes):
+        t_class = true_classes[i]
+        acc_df_top1[t_class] += t_class in classes[:1]
+        acc_df_top2[t_class] += t_class in classes[:2]
+        acc_df_top3[t_class] += t_class in classes[:3]
+        acc_df_top5[t_class] += t_class in classes[:5]
+        
+    # Get overall metrics
+    n = len(pred_classes)
+    acc_top1 = acc_df_top1.sum()/n
+    acc_top2 = acc_df_top2.sum()/n
+    acc_top3 = acc_df_top3.sum()/n
+    acc_top5 = acc_df_top5.sum()/n
+    
+    # Get class specific metrics    
+    value_c = pd.Series(true_classes).value_counts()
+    acc_df_top1 = acc_df_top1/value_c
+    acc_df_top2 = acc_df_top2/value_c
+    acc_df_top3 = acc_df_top3/value_c
+    acc_df_top5 = acc_df_top5/value_c
+    
+    acc_df = pd.DataFrame({'acc_top1': acc_df_top1,
+                            'acc_top2': acc_df_top2,
+                            'acc_top3': acc_df_top3,
+                            'acc_top5': acc_df_top5})
+    
+    return acc_top1, acc_top2, acc_top3, acc_top5, acc_df
+   
+def calc_ACE(probs_df: pd.DataFrame, 
+             true_classes: list,
+             num_b: int = 14):
+    true_classes = np.array(true_classes)
+    true_classes_unique = pd.unique(true_classes).tolist()
+    
+    # Init dataframes for storing accuracies of bins and number of elements in each bin
+    cali_plot_df_acc  = pd.DataFrame(index = np.arange(0,num_b), columns = true_classes_unique)
+    cali_plot_df_conf = pd.DataFrame(index = np.arange(0,num_b), columns = true_classes_unique)
+    num_each_bin_df = pd.DataFrame(index = np.arange(0,num_b), columns = true_classes_unique)
+     
+    # unique true classes
+    true_classes_unique = pd.unique(true_classes).tolist()
+    for class_ in true_classes_unique:
+        class_probs = probs_df.loc[class_,:]
+        num_samples_class = len(class_probs)
+        num_per_bin = int(np.ceil(num_samples_class/num_b))
+        class_probs_sorted_idx = np.argsort(class_probs).values
+        for i in range(num_b):
+            min_idx = i*num_per_bin
+            max_idx = np.min([(i+1)*num_per_bin,num_samples_class])
+            idx_bin = class_probs_sorted_idx[min_idx:max_idx]
+            class_probs_in_bin = class_probs[idx_bin]
+            class_probs_in_bin_true = true_classes[idx_bin]==class_
+            
+            if class_probs_in_bin_true.size != 0:
+                cali_plot_df_acc.loc[i,class_] = np.mean(class_probs_in_bin_true)
+                cali_plot_df_conf.loc[i,class_] = np.mean(class_probs_in_bin)
+                num_each_bin_df.loc[i,class_] = len(idx_bin)
+            
+    # Calculate ACE    
+    ACE, ACE_df = _calc_CECE_(cali_plot_df_acc.iloc[:,:],
+                                cali_plot_df_conf.iloc[:,:],
+                                num_each_bin_df.iloc[:,:])
+    
+    return ACE, ACE_df, cali_plot_df_acc, cali_plot_df_conf, num_each_bin_df
+    
+     
+def calc_ECE(probs_df: pd.DataFrame, 
+             true_classes: list):
+    true_classes = np.array(true_classes)
+    true_classes_unique = pd.unique(true_classes).tolist()
+    true_classes_unique.append('All (WECE)')
+    bins = np.array([0,0.01,0.05,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,0.95,0.99,1])
+    bins_mid = [(bins[i+1]+bins[i])/2 for i in range(len(bins)-1)]
+    
+    # Init dataframes for storing accuracies of bins and number of elements in each bin
+    cali_plot_df_acc  = pd.DataFrame(index = bins_mid, columns = true_classes_unique)
+    cali_plot_df_conf = pd.DataFrame(index = bins_mid, columns = true_classes_unique)
+    num_each_bin_df = pd.DataFrame(index = bins_mid, columns = true_classes_unique)
+    
+    cali_plot_df_acc['All (WECE)']  = np.zeros((len(bins_mid),))
+    cali_plot_df_conf['All (WECE)'] = np.zeros((len(bins_mid),))
+    num_each_bin_df['All (WECE)']   = np.zeros((len(bins_mid),))
+    
+    # reset true classes
+    true_classes_unique = pd.unique(true_classes).tolist()
+    
+    # for numeric stability
+    bins[0] += -1.e-1 
+    bins[-1] += 1.e-1
+    
+    for class_ in true_classes_unique:
+        class_probs = probs_df.loc[class_,:]
+        for i in range(len(bins_mid)):
+            class_probs_in_bin = (class_probs <= bins[i+1]) & (class_probs > bins[i])
+            class_probs_in_bin_true = true_classes[class_probs_in_bin]==class_
+            if class_probs_in_bin_true.size != 0:
+                cali_plot_df_acc.loc[bins_mid[i],class_] = np.mean(class_probs_in_bin_true)
+                cali_plot_df_acc.loc[bins_mid[i],'All (WECE)'] += np.sum(class_probs_in_bin_true)
+                cali_plot_df_conf.loc[bins_mid[i],class_] = np.mean(class_probs[class_probs_in_bin])
+                cali_plot_df_conf.loc[bins_mid[i],'All (WECE)'] += np.sum(class_probs[class_probs_in_bin])
+                num_each_bin_df.loc[bins_mid[i],class_] = np.sum(class_probs_in_bin)
+                num_each_bin_df.loc[bins_mid[i],'All (WECE)'] += np.sum(class_probs_in_bin)
+    
+    # Calc accuracy and conf across all images (WECE)
+    cali_plot_df_acc['All (WECE)'] = cali_plot_df_acc['All (WECE)']/num_each_bin_df['All (WECE)']
+    cali_plot_df_conf['All (WECE)'] = cali_plot_df_conf['All (WECE)']/num_each_bin_df['All (WECE)']
+    
+    # Calculate non-weighted mean across accuracies (AECE)
+    cali_plot_df_acc['Class_mean (AECE)'] = cali_plot_df_acc.iloc[:,:-1].mean(axis=1)
+    cali_plot_df_conf['Class_mean (AECE)'] = cali_plot_df_conf.iloc[:,:-1].mean(axis=1)
+    num_each_bin_df['Class_mean (AECE)'] = num_each_bin_df['All (WECE)']
+    
+    # Calaculate ECE across weighted and non-weighted accuracies
+    # SCE:
+    # https://medium.com/codex/metrics-to-measuring-calibration-in-deep-learning-36b0b11fe816
+    WECE = _calc_ECE_(cali_plot_df_acc['All (WECE)'], 
+                      cali_plot_df_conf['All (WECE)'], 
+                      num_each_bin_df['All (WECE)'])
+    AECE = _calc_ECE_(cali_plot_df_acc['Class_mean (AECE)'],
+                      cali_plot_df_conf['Class_mean (AECE)'],
+                      num_each_bin_df['All (WECE)'])
+    CECE, CECE_df = _calc_CECE_(cali_plot_df_acc.iloc[:,:-2],
+                                cali_plot_df_conf.iloc[:,:-2],
+                                num_each_bin_df.iloc[:,:-2])
+    
+    return (cali_plot_df_acc, cali_plot_df_conf, WECE, 
+            AECE, CECE, CECE_df, num_each_bin_df)    
+    
+    
 def confidence_vs_accuracy(probs_df: pd.DataFrame,
                            true_classes: list):
     true_classes = np.array(true_classes)
@@ -120,7 +302,7 @@ def get_UCE(probs_df: pd.DataFrame,
     # Get UCE plots
     fig = UCE_plots(uncert_cali_plot_df)
     
-    return UCE, fig, uncert_cali_plot_df
+    return UCE, fig, uncert_cali_plot_df, uncertainty
 
 
 def get_AvU(probs_df: pd.DataFrame,

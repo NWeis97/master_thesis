@@ -20,8 +20,12 @@ from PIL import Image, ImageFont, ImageDraw
 # Own imports
 from src.models.image_classifier import ImageClassifier
 
-warnings.simplefilter(action='ignore', category=FutureWarning)
+# Warnings ignore
+from pandas.core.common import SettingWithCopyWarning
+warnings.simplefilter('ignore', FutureWarning)
 warnings.simplefilter("ignore", UserWarning)
+np.seterr(divide='ignore')
+warnings.simplefilter("ignore",SettingWithCopyWarning)
 
 
 
@@ -130,7 +134,7 @@ def print_PCA_tSNE_plot(data: np.array ,qvars: np.array, classes: list, epoch: i
     if mode == 'test':
         ax.set_title(f'tSNE test (var_prior={varP:.3f})', fontsize=20)
     else:
-        ax.set_title(f'tSNE epoch {epoch} (var_prior={varP:.3f})', fontsize=20)
+        ax.set_title(f'tSNE {mode}: epoch {epoch} (var_prior={varP:.3f})', fontsize=20)
     ax.legend(fontsize=15)
     
     # Move legend
@@ -171,7 +175,7 @@ def print_PCA_tSNE_plot(data: np.array ,qvars: np.array, classes: list, epoch: i
     if mode == 'test':
         ax2.set_title(f'PCA test (var_prior={varP:.3f})', fontsize=20)
     else:
-        ax2.set_title(f'PCA epoch {epoch} (var_prior={varP:.3f})', fontsize=20)
+        ax2.set_title(f'PCA {mode}: epoch {epoch} (var_prior={varP:.3f})', fontsize=20)
     ax2.legend(fontsize=15)
     
     # Move legend
@@ -351,7 +355,8 @@ def print_tSNE_plot_with_images(data: np.array, objects: list, bbox: list, class
     return fig, fig2
 
 
-def image_object_full_bbox_resize_class(path,bbox,img_size,t_class,p_class,probs,var=None):
+def image_object_full_bbox_resize_class(path,bbox,img_size,t_class,
+                                        p_class,probs,var=None,metric='variance'):
     """
     This function is a generic PIL image loader of an object on
     an image with path 'path' and bounding box 'bbox'.
@@ -393,7 +398,7 @@ def image_object_full_bbox_resize_class(path,bbox,img_size,t_class,p_class,probs
     myFont = ImageFont.truetype('FreeMono.ttf', 40)
     # Add Text to an image
     concat_img = ImageDraw.Draw(concat_img)
-    concat_img.text((10, 10), f"True class: {t_class}, Pred class: {p_class}, variance: {var:.4f}",
+    concat_img.text((10, 10), f"True class: {t_class}, Pred class: {p_class}, {metric}: {var:.4f}",
                     font=myFont, fill =(255, 255, 255))
     
     # add probs if parsed
@@ -443,25 +448,29 @@ def visualize_embedding_space(classifier: ImageClassifier):
     return fig_tsne_test, fig_pca_test
 
 
-def visualize_var_dist_per_class(vars):
+def visualize_metric_dist_per_class(vars, metric:str):
     for class_ in vars.keys():
         vars[class_] = list(vars[class_].values())
     
     # Create dataframe
-    vars = (pd.DataFrame.from_dict(vars,'index').stack().reset_index(name='Variance')
+    vars = (pd.DataFrame.from_dict(vars,'index').stack().reset_index(name=metric)
                         .drop('level_1',1).rename(columns={'level_0':'Class'}))
     
     # Save fig
     fig, ax = plt.subplots(1,1, figsize=(10,7))
-    sns.boxplot(data=vars, x="Variance", y="Class", ax=ax)
-    ax.set_title('Distribution of variances', fontsize=15)
+    sns.boxplot(data=vars, x=metric, y="Class", ax=ax)
+    ax.set_title(f'Distribution of {metric}', fontsize=15)
     return fig
 
 
 def calibration_plots(cali_plot_df_acc: pd.DataFrame,
                       cali_plot_df_conf: pd.DataFrame,
-                      num_samples_bins: pd.DataFrame):
-    num_classes = len(cali_plot_df_acc.columns)-2
+                      num_samples_bins: pd.DataFrame,
+                      ace_bool: bool = False):
+    if ace_bool == False:
+        num_classes = len(cali_plot_df_acc.columns)-2
+    else:
+        num_classes = len(cali_plot_df_acc.columns)
     
     fig, axes = plt.subplots(nrows=int(num_classes/5)+1,ncols=5, figsize=(16,12),
                              sharex=True, sharey=True)
@@ -487,22 +496,30 @@ def calibration_plots(cali_plot_df_acc: pd.DataFrame,
         y = cali_plot_df_acc[class_]
         std = cali_plot_df_acc[class_]*(1-cali_plot_df_acc[class_])/num_samples_bins[class_]
         std = np.sqrt(std.fillna(100))
-        ax.plot(x,y,marker='o', linewidth=1, markersize=0,color=color)
-        ax.scatter(x,y,marker='o',s=sizes, edgecolors='k', c=color,linewidth=0.5)
-        ax.fill_between(x.tolist(), np.maximum((y-std).tolist(),0), 
+
+         # Add reference lines
+        x_opt = np.arange(0,1.01,0.01)
+        y_opt = np.arange(0,1.01,0.01)
+        ax.plot(x_opt,y_opt, linewidth=1, color='black', linestyle='--', markersize=0)
+        ax.scatter(x,y,marker='o',s=sizes, edgecolors='k', c=color,linewidth=0)
+        if ace_bool == True:
+            ax.set_yscale('symlog', linthresh=1e-3)
+        else:
+            ax.plot(x,y,marker='o', linewidth=1, markersize=0,color=color)
+            ax.fill_between(x.tolist(), np.maximum((y-std).tolist(),0), 
                         np.minimum((y+std).tolist(),1),alpha=0.5,
                         edgecolor=color,facecolor=color,linestyle='-')
-
+    
         # reference line, legends, and axis labels
-        line = mlines.Line2D([0, 1], [0, 1], color='black', linestyle='--')
-        transform = ax.transAxes
-        line.set_transform(transform)
-        ax.add_line(line)
         ax.set_title(f'{class_}',fontsize=15)
 
     fig.supxlabel('Predicted probability',fontsize=20, y=0.03)
     fig.supylabel('True probability in each bin',fontsize=20, x=0.03)
-    fig.suptitle('Calibration plots for each class',fontsize=20, y=0.96)
+    
+    if ace_bool == False:
+        fig.suptitle('Calibration plots for each class',fontsize=20, y=0.96)
+    else:
+        fig.suptitle('Calibration plots for each class (adaptive)',fontsize=20, y=0.96)
     
     legend_elements = [Line2D([0], [0], marker='o', color='k', label='#Samples = 1',
                                         markerfacecolor='#1f77b4', markersize=1,linewidth=0,
@@ -513,9 +530,9 @@ def calibration_plots(cali_plot_df_acc: pd.DataFrame,
                        Line2D([0], [0], marker='o', color='k', label='#Samples > 100',
                                         markerfacecolor='#1f77b4', markersize=10,linewidth=0,
                                         markeredgewidth=0.5)]
-    
-    plt.subplots_adjust(left=0.1, right=0.82, top=0.9, bottom=0.1)
-    fig.legend(handles=legend_elements, loc='center', bbox_to_anchor=(0.91, 0.55))
+    if ace_bool == False:
+        plt.subplots_adjust(left=0.1, right=0.82, top=0.9, bottom=0.1)
+        fig.legend(handles=legend_elements, loc='center', bbox_to_anchor=(0.91, 0.55))
     
     # Add legend for coloring
     legend_elements2 = [Line2D([0], [0], marker='', color='#1f77b4', label='Classes ID',
@@ -526,9 +543,10 @@ def calibration_plots(cali_plot_df_acc: pd.DataFrame,
                        Line2D([0], [0], marker='', color='#008000', label='Classes combined',
                                         markersize=0,linewidth=1,markeredgewidth=0)]
 
-    legend2 = fig.legend(legend_elements2,['Classes ID','Classes OOD','Classes combined'], 
+    if ace_bool == False:
+        legend2 = fig.legend(legend_elements2,['Classes ID','Classes OOD','Classes combined'], 
                          loc='center', bbox_to_anchor=(0.91, 0.45))
-    fig.add_artist(legend2)
+        fig.add_artist(legend2)
     
     return fig
 
