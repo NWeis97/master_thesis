@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import torch
 import ast
+import pickle
 
 # Own imoprts
 from src.models.image_classifier import ImageClassifier, init_classifier_model
@@ -23,7 +24,8 @@ from src.utils.performance_measures import (confidence_vs_accuracy,
                                             calc_MaP,
                                             calc_accuracy,
                                             calc_ECE,
-                                            calc_ACE)
+                                            calc_ACE,
+                                            get_entropies)
 
 
 def main(args):
@@ -53,14 +55,35 @@ def main(args):
     
     # Extract classifier model
     classifier = init_classifier_model(classifier_model,
-                                       database_model)
-    
+                                       database_model,
+                                       calibration_method=calibration_method)
+
     # Calculate probabilities
     (probs_df, 
      objects, 
      bboxs, 
-     true_classes) = classifier.get_probability_dist_dataset(test_dataset,calibration_method)
+     true_classes) = classifier.get_probability_dist_dataset(test_dataset)
     
+    
+    #* -------------------------------------------
+    #* ------ Remove classes not trained on ------
+    #* -------------------------------------------
+    OOD_true_classes_idx = ([i for i in range(len(true_classes)) 
+                                if true_classes[i] in classifier.classes_not_trained_on])
+    OOD_probs_df = probs_df.iloc[:,OOD_true_classes_idx]
+    #OOD_objects = [objects[i] for i in range(len(true_classes)) if i in OOD_true_classes_idx]
+    #OOD_bboxs = [bboxs[i] for i in range(len(true_classes)) if i in OOD_true_classes_idx]
+    #OOD_true_classes = ([true_classes[i] for i in range(len(true_classes)) 
+    #                    if i in OOD_true_classes_idx])
+    
+    ID_true_classes_idx = [i for i in range(len(true_classes)) if i not in OOD_true_classes_idx]
+    probs_df = probs_df.iloc[:,ID_true_classes_idx]
+    objects = [objects[i] for i in range(len(true_classes)) if i in ID_true_classes_idx]
+    bboxs = [bboxs[i] for i in range(len(true_classes)) if i in ID_true_classes_idx]
+    true_classes = ([true_classes[i] for i in range(len(true_classes)) 
+                        if i in ID_true_classes_idx])
+        
+        
     
     #* --------------------------------------
     #* ------ Get Performance Measures ------
@@ -85,6 +108,10 @@ def main(args):
     (AvU_simple_thresh, simple_thresh, AvU_simple_df, 
      AvU_best_thresh, best_thresh, AvU_best_df,
      AUC_AvU, ACr_list, ICr_list) = get_AvU(probs_df, true_classes,len(classifier.unique_classes))
+    
+    # Get entropies of OOD objects
+    entropies_OOD = get_entropies(OOD_probs_df)
+    entropies_ID = get_entropies(probs_df)
     
     
     
@@ -198,27 +225,68 @@ def main(args):
     
     
     
+    #* ---------------------------------------
+    #* ------ Log Results to local file ------
+    #* ---------------------------------------
+    method = 'Vanilla'
+    metrics_dict = {'Model Type': classifier.model_type,
+                    'Method': method,
+                    'Calibration Method': calibration_method,
+                    'With_OOD': False,
+                    'Seed': classifier.params['seed'],
+                    'MaP': MaP,
+                    'Accuracy top1': acc_top1,
+                    'Accuracy top2': acc_top2,
+                    'Accuracy top3': acc_top3,
+                    'Accuracy top5': acc_top5,
+                    'AECE': AECE,
+                    'WECE': WECE,
+                    'CECE': CECE,
+                    'ACE': ACE,
+                    'UCE': UCE,
+                    'AvU_simple_thresh': AvU_simple_thresh,
+                    'AvU_best_thresh': AvU_best_thresh,
+                    'Uncertainty_simple_thresh': simple_thresh,
+                    'Uncertainty_best_thresh': best_thresh,
+                    'AUC_AvU': AUC_AvU}
+    
+    graphs_dict = {'Model Type': classifier.model_type,
+                   'Method': method,
+                   'Calibration Method': calibration_method,
+                   'With_OOD': False,
+                   'Seed': classifier.params['seed'],
+                   'conf_vs_acc': conf_vs_acc_df,
+                   'Accurate when certain_unc_thresh': acc_cert_df,
+                   'Uncertain when inaccurate_thresh_unc': uncert_inacc_df,
+                   'Accurat_certain_ratio': ACr_list,
+                   'Inaccurat_certain_ratio': ICr_list,
+                   'Class Metrics': class_metrics,
+                   'Class Calibration Acc': cali_plot_df_acc,
+                   'Class Calibration Conf': cali_plot_df_conf,
+                   'Class Calibration count': num_each_bin_df,
+                   'Class Calibration Acc (ACE)': ACE_acc_df,
+                   'Class Calibration Conf (ACE)': ACE_conf_df,
+                   'Class Calibration count (ACE)': ACE_num_each_bin,
+                   'Uncertainty Calibration': UCE_df,
+                   'AvU_simple_df': AvU_simple_df,
+                   'AvU_best_df': AvU_best_df,
+                   'Entropies_ID': entropies_ID,
+                   'Entropies_OOD': entropies_OOD}
+    
+     # Extract args
+    file_name = f"{classifier_model}_{method}_{calibration_method}"
+    with open(f'reports/test_results/{file_name}_metrics_dict.pickle', 'wb') as f:
+        pickle.dump(metrics_dict, f)
+    with open(f'reports/test_results/{file_name}_graphs_dict.pickle', 'wb') as f:
+        pickle.dump(graphs_dict, f)
+    
     
     #* ----------------------------------
     #* ------ Log Results to WandB ------
     #* ----------------------------------
     
     # Log simple performance measures
-    wandb.log({'MaP':MaP,
-               'Accuracy top1': acc_top1,
-               'Accuracy top2': acc_top2,
-               'Accuracy top3': acc_top3,
-               'Accuracy top5': acc_top5,
-               'AECE': AECE,
-               'WECE': WECE,
-               'CECE': CECE,
-               'ACE': ACE,
-               'UCE': UCE,
-               'AvU_simple_thresh': AvU_simple_thresh,
-               'AvU_best_thresh': AvU_best_thresh,
-               'Uncertainty_simple_thresh': simple_thresh,
-               'Uncertainty_best_thresh': best_thresh,
-               'AUC_AvU': AUC_AvU})
+    wandb.log(metrics_dict)
  
  
     # Log class-specific metrics

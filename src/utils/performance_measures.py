@@ -4,7 +4,8 @@ import numpy as np
 import pdb
 
 # Own Imports
-from src.utils.performance_measures_helper_functions import ( _get_uncertainties_,
+from src.utils.performance_measures_helper_functions import (_get_entropy_unnormalized_,
+                                                             _get_uncertainties_,
                                                              _get_AUC_AvU_,
                                                              _calc_AUC_,
                                                              _calc_aP_for_class_,
@@ -129,7 +130,7 @@ def calc_ACE(probs_df: pd.DataFrame,
     
     return ACE, ACE_df, cali_plot_df_acc, cali_plot_df_conf, num_each_bin_df
     
-     
+    
 def calc_ECE(probs_df: pd.DataFrame, 
              true_classes: list):
     true_classes = np.array(true_classes)
@@ -383,4 +384,10 @@ def get_AvU(probs_df: pd.DataFrame,
             AUC_AvU, ACr_list, ICr_list)
     
     
+def get_entropies(probs_df: pd.DataFrame):
+    entropies = []
+    for i in range(len(probs_df.columns)):
+        entropies.append(_get_entropy_unnormalized_(probs_df.iloc[:,i]))
+        
+    return entropies
     

@@ -3,6 +3,10 @@ import numpy as np
 import pandas as pd
 
 
+def _get_entropy_unnormalized_(probs):
+    ei = np.abs(-np.sum(probs*np.log(probs)))
+    return ei
+
 def _get_entropy_(probs,num_classes):
     ui = np.abs(-np.sum(probs*np.log(probs))/np.log(num_classes))
     return ui

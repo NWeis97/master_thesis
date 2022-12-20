@@ -1,10 +1,15 @@
 #!/bin/bash
 ### Settings for test run
 export R=1
-export model_name=happy-sunset-1179
-export model_database=TRAIN
-export test_dataset=val
-export calibration_method=None
+export model_name=lucky-aardvark-1727
+export model_database=TRAINVAL
+export test_dataset=test
+export calibration_method=TempScaling
+
+#None
+#TempScaling
+#MCDropout
+#SWAG
 
 
 ### NAME OF FILE

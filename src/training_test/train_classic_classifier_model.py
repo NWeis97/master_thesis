@@ -52,8 +52,7 @@ def train(train_loader: DataLoader, model: ImageClassifierNet_Classic,
         
         # Get accuracy
         _, out_idx = output.max(dim=1)
-        _, target_idx = target.max(dim=1)
-        accuracy.update(torch.sum(out_idx.cpu() == target_idx).item()/len(classes))
+        accuracy.update(torch.sum(out_idx.cpu() == target).item()/len(classes))
         
         end2 = time.time()
         loss.backward()
@@ -89,7 +88,8 @@ def train(train_loader: DataLoader, model: ImageClassifierNet_Classic,
 
 
 def validate(val_loader: DataLoader, model: ImageClassifierNet_Classic, 
-             criterion: BayesianTripletLoss, epoch: int, print_freq: int):
+             criterion: BayesianTripletLoss, epoch: int, print_freq: int,
+             temp: float = None, with_swag = False):
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
@@ -105,14 +105,22 @@ def validate(val_loader: DataLoader, model: ImageClassifierNet_Classic,
             # measure data loading time
             data_time.update(time.time() - end)
             
-            output = model.forward_head(input)
-            loss = criterion(output, target.cuda())
+            # Get model output
+            if with_swag == True:
+                output = model.forward_head_with_swag(input)
+            else:
+                output = model.forward_head(input)
+            
+            # Adjust with temp    
+            if temp is not None:
+                loss = criterion(output/temp, target.cuda())
+            else:
+                loss = criterion(output, target.cuda())
             losses.update(loss.item())
             
             # Get accuracy
             _, out_idx = output.max(dim=1)
-            _, target_idx = target.max(dim=1)
-            accuracy.update(torch.sum(out_idx.cpu() == target_idx).item()/len(classes))
+            accuracy.update(torch.sum(out_idx.cpu() == target).item()/len(classes))
         
             # measure elapsed time
             batch_time.update(time.time() - end)
@@ -206,11 +214,23 @@ def main(config):
     logger.info(">> Initilizing datasets")
     classes_not_trained_on = ast.literal_eval(dataset_conf['classes_not_trained_on'])
     num_classes = 20 - len(classes_not_trained_on)
-    ds_train = Pooling_Dataset(mode='train', 
+    
+    if default_conf['training_dataset'] == 'train':
+        logger.info(">> Training model with Train data")
+        mode_train = 'train'
+        mode_val = 'val'
+    elif default_conf['training_dataset'] == 'trainval':
+        logger.info(">> Training model with Train amnd Validation data")
+        mode_train = 'trainval'
+        mode_val = 'test'
+    else:
+        raise ValueError("training_dataset unknown -> choose either train or trainval")
+    
+    ds_train = Pooling_Dataset(mode=mode_train, 
                             poolsize_class=int(dataset_conf['poolsize_class']),
                             transform=transformer_train,
                             classes_not_trained_on=classes_not_trained_on)
-    ds_val = Pooling_Dataset(mode='val', 
+    ds_val = Pooling_Dataset(mode=mode_val, 
                               poolsize_class=int(dataset_conf['poolsize_class']),
                               transform=transformer_valid,
                               classes_not_trained_on=classes_not_trained_on)
@@ -220,7 +240,8 @@ def main(config):
     # ******** Initialize model ***********
     # *************************************
     logger.info(">> Initilizing model")
-    params = {'model_type': 'Classic',          
+    params = {'model_type': 'Classic',  
+                        'seed':int(default_conf['seed']),        
                         'architecture':ast.literal_eval(model_conf['architecture']),
                         'fixed_backbone': ast.literal_eval(model_conf['fixed_backbone']),
                         'const_eval_mode': ast.literal_eval(model_conf['const_eval_mode']),
@@ -231,7 +252,9 @@ def main(config):
                         'dropout': float(model_conf['dropout']),
                         'classes_not_trained_on': classes_not_trained_on,
                         'img_size': int(img_conf['img_size']),
-                        'normalize_mv' : ast.literal_eval(img_conf['normalize'])}
+                        'normalize_mv' : ast.literal_eval(img_conf['normalize']),
+                        'with_swag': ast.literal_eval(model_conf['with_swag']),
+                        'trained_on': mode_train}
     net = init_network('Classic',params)
     net.cuda()
     
@@ -244,7 +267,7 @@ def main(config):
     # ******** Initialize loaders ***********
     # ***************************************
     # Init tuples
-    logger.info(">> Initilizing tuples")
+    logger.info(">> Initilizing backbone representations")
     ds_train.update_backbone_repr_pool(net)
     ds_val.update_backbone_repr_pool(net)
     
@@ -265,7 +288,8 @@ def main(config):
     num_epochs = int(hyper_conf['epochs'])
     lr_init = float(hyper_conf['lr_init'])
     lr_end = float(hyper_conf['lr_end'])
-    lr_diff = (lr_end-lr_init)*(1/(num_epochs-num_epochs//4))
+    #lr_diff = (lr_end-lr_init)*(1/(num_epochs-num_epochs//4))
+    lr_frac = (lr_end/lr_init)**(1/max(1,num_epochs))
     clip = float(hyper_conf['clip'])
     update_every = int(hyper_conf['update_every'])
     update_pool_num = int(hyper_conf['update_pool_every'])
@@ -276,14 +300,15 @@ def main(config):
     logger.info(f"Total memory consumption on Cuda: {mem_cuda:.3f}GB")
     
     
-    criterion = nn.BCELoss()
+    criterion = nn.CrossEntropyLoss()
     
     for i in range(num_epochs):
         logger.info(f"\n\n########## Training {i+1}/{num_epochs} ##########")
         # *****************************
         # ******** Training ***********
         # *****************************
-        lr_optim = max(lr_init+(lr_diff*(max(0,i+1-num_epochs//4))),lr_end)
+        #lr_optim = max(lr_init+(lr_diff*(max(0,i+1-num_epochs//4))),lr_end)
+        lr_optim = max(lr_init*lr_frac**i,lr_end)
         base_params = net.features.parameters()
         head_params = [i for i in net.parameters() if i not in base_params]
         optim = AdamW([
@@ -323,7 +348,7 @@ def main(config):
             )
         
         # Save model on W&B and remove locally
-        if (i+1)%save_model_freq == 0:
+        if ((i+1)%save_model_freq == 0) | (i == num_epochs-1):
             logger.info('Saving the model')
             torch.save(net.state_dict(),f'./models/tmp_models/{wandb_run_name}.pt')
             wandb.save(f'./models/tmp_models/{wandb_run_name}.pt', policy="now")
@@ -339,15 +364,93 @@ def main(config):
         else:
             update_pool_count += 1
 
+
+
+    # **********************************************
+    # ******** Find Optimal Temperature ************
+    # **********************************************
+    temp_vals = torch.logspace(-3,3,500)
+    CE_out = []
+    for temp in temp_vals:
+        val_loss, val_acc = validate(val_loader,net,criterion,i,print_freq,temp)
+        CE_out.append(val_loss)
         
+    temp_opt = temp_vals[np.array(CE_out).argmin()].item()
+    params['temp_opt'] = temp_opt
+    
+    # Save new parameters to json file
+    with open(f"./models/params/{wandb_run_name}.json", "w") as outfile:
+        json.dump(params, outfile)
+    wandb.save(f'./models/params/{wandb_run_name}.json', policy="now")
+    
+    
+    # *******************************
+    # ******** With SWAG ************
+    # *******************************
+    head_params_swag = []
+    head_params_mean = []
+    head_params_var = []
+    logger.info(f'>> Extracting param values for SWAG')
+    
+    #Reset lr
+    lr_optim = (lr_init*lr_end)**(1/2)
+    
+    if params['with_swag'] == True:
+        for j in range(20):
+            base_params = net.features.parameters()
+            head_params = [i for i in net.parameters() if i not in base_params]
+            head_params_ex = [i.data.clone() for i in head_params]
+            head_params_swag.append(head_params_ex)
+            
+            optim = AdamW([
+                            {'params': head_params},
+                            {'params': base_params, 'lr': lr_optim*0.01}, 
+                        ],lr=lr_optim, weight_decay=1e-1)
+        
+            # train model
+            train_loss, train_acc = train(train_loader,net,criterion,optim,
+                                                            j, update_every, print_freq, 
+                                                            clip)
+            
+            logger.info(f'>>>>> {j+1}/{20}')
+            if (j != 20):
+                train_loader.dataset.update_backbone_repr_pool(net)
+ 
+        
+        # Get mean of params
+        for j in range(len(head_params)):
+            mean_params = head_params_swag[0][j].clone()
+            for k in range(len(head_params_swag)-1):
+                mean_params += head_params_swag[k+1][j]
+            mean_params /= len(head_params_swag)
+            head_params_mean.append(mean_params)
+            
+        # Get var of params
+        for j in range(len(head_params)):
+            var_params = ((head_params_swag[0][j]-head_params_mean[j])**2).clone()
+            for k in range(len(head_params_swag)-1):
+                var_params += (head_params_swag[k+1][j]-head_params_mean[j])**2
+            var_params /= len(head_params_swag)
+            head_params_var.append(var_params**(1/2))
+            
+        net.head_mean = head_params_mean
+        net.head_std = head_params_var
+        
+        val_loss, val_acc = validate(val_loader,net,criterion,i,print_freq,None,True)
+        
+        logger.info('Saving SWAG headers')
+        torch.save(net.head_mean,f'./models/swag_headers/{wandb_run_name}_mean_swag.pt')
+        torch.save(net.head_std,f'./models/swag_headers/{wandb_run_name}_var_swag.pt')
+        
+    # ********************************
+    # ******** Finish up run *********
+    # ********************************
     wandb.save(f'./logs/training_test/train_model/{wandb_run_name}.log') 
     
     # Remove local files
     wandb_local_dir = wandb.run.dir[:-5]
     wandb.finish()
     os.remove(f'./logs/training_test/train_model/{wandb_run_name}.log')
-    os.remove(f'./models/tmp_models/{wandb_run_name}.json')
-    os.remove(f'./models/tmp_models/{wandb_run_name}.pt')
     shutil.rmtree(wandb_local_dir, ignore_errors=True)
     
     

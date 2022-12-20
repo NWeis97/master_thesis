@@ -9,6 +9,7 @@ from torch_scatter import scatter_sum
 from src.models.image_classification_network import init_network
 import pdb
 from os.path import exists
+import multiprocessing
 
 # Load own libs
 from src.loaders.generic_loader import ObjectsFromList, image_object_loader
@@ -65,12 +66,12 @@ class ImageClassifier():
         self.num_classes = len(self.classes_trained_on)
         
         # Create db for classes trained on (with OOD if wanted)
-        if self.with_OOD == True:
-            if self.model_type != 'BayesianTripletLoss':
-                Warning("Model is not compatible with OOD classes - OOD not included")
-                db = {key:db[key] for key in self.classes_trained_on}
-        else:
-            db = {key:db[key] for key in self.classes_trained_on}
+        #if self.with_OOD == True:
+        #    if self.model_type != 'BayesianTripletLoss':
+        #        Warning("Model is not compatible with OOD classes - OOD not included")
+        #        db = {key:db[key] for key in self.classes_trained_on}
+        #else:
+        #    db = {key:db[key] for key in self.classes_trained_on}
                 
         # Extract list of images
         obj_names = [[db[key][j]['img_name'] for j in range(len(db[key]))] for key in db.keys()]
@@ -190,6 +191,7 @@ class ImageClassifier():
             class_num = [db_test[j]['classes'] for j in range(len(db_test))]
             classes = []
             [classes.extend(class_list) for class_list in class_num]
+        
         else:
             # Extract list of images
             obj_names = [[db_test[key][j]['img_name'] for j in range(len(db_test[key]))] for key in db_test.keys()]
@@ -220,6 +222,7 @@ class ImageClassifier():
             
         return objects, bboxs, classes
     
+    
     def _create_dict_of_class_idxs_(self):
         # Split classes into list with indices of positions
         if self.with_OOD == True & (self.model_type == 'BayesianTripletLoss'):
@@ -244,7 +247,8 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
                  params: dict,
                  model_data: str,
                  with_OOD: bool = False,
-                 balanced_classes: int = 0):
+                 balanced_classes: int = 0,
+                 calibration_method: str = 'none'):
         """Image classifier model. Has embeddings of training data and can classify and calculate
            probability disitrbution for unknown object over objects trained on.
 
@@ -259,6 +263,7 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
         """
         super().__init__(model_name, model_type, params, model_data, with_OOD)
         self.balanced_classes = balanced_classes
+        self.calibration_method = calibration_method
         
         # ************************************************************************
         # ******** Extract means, variance and classes for model data  ***********
@@ -267,18 +272,36 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
         file_name = './models/embeddings/' + self._get_embedding_file_storing_name_()
         
         if exists(file_name+'means.pt') == False:
-            self.means, self.vars, self.classes = self._extract_means_and_variances_()
+            self.means, self.vars, self.backbone_repr, self.classes = self._extract_means_and_variances_()
             torch.save(self.means,file_name+'means.pt')
             torch.save(self.vars,file_name+'vars.pt')
             torch.save(self.classes,file_name+'classes.pt')
         else:
-            logger.info('Loading already existing classifier model')
-            self.means = torch.load(file_name+'means.pt')
-            self.vars = torch.load(file_name+'vars.pt')
-            self.classes = torch.load(file_name+'classes.pt')
+            if (self.calibration_method == 'SWAG') | (self.calibration_method == 'MCDropout'):
+                logger.info('SWAG and MCDropout calibration need backbone representations... Loading them first')
+                self.means, self.vars, self.backbone_repr, self.classes = self._extract_means_and_variances_()
+            else:   
+                logger.info('Loading already existing classifier model')
+                self.means = torch.load(file_name+'means.pt')
+                self.vars = torch.load(file_name+'vars.pt')
+                self.classes = torch.load(file_name+'classes.pt')
+            
+                
    
         # Init dict of class idx
         self._create_dict_of_class_idxs_()
+        
+        if self.calibration_method == 'SWAG':
+            if self.model.with_swag == False:
+                raise ValueError("Model can not be evaulated with SWAG - does not exist")
+            else:
+                self.model.head_mean__mean = torch.load(f'./models/swag_headers/{model_name}_mean_swag__mean.pt')
+                self.model.head_mean__var = torch.load(f'./models/swag_headers/{model_name}_mean_swag__var.pt')
+                self.model.head_std__mean = torch.load(f'./models/swag_headers/{model_name}_std_swag__mean.pt')
+                self.model.head_std__var = torch.load(f'./models/swag_headers/{model_name}_std_swag__var.pt')
+                
+        self.out_rand = None
+        self.out_rand_init = False
    
     # --------------------------------------------------------------------------------------------
     # ----------------------------------- Public functions ---------------------------------------
@@ -395,11 +418,12 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
             var_dim = int(self.params['dim_out']/2)
             
         with torch.no_grad():
-            output = self.model(img.cuda()).data.squeeze()
+            backbone_emb = self.model.forward_backbone(img.cuda())
+            output = self.model.forward_head(backbone_emb).data.squeeze()
             mean_emb = output[:-var_dim]
             var_emb = output[-var_dim:]
         
-        return mean_emb, var_emb
+        return mean_emb, var_emb, backbone_emb
 
     def _get_probability_dist_(self, img_name: str, 
                                    bbox: list, 
@@ -422,18 +446,74 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
             num_MC (int, optional): Number of Monte Carlo samples. Defaults to 10000.
             method (str. optional): See description under function for get_probability_dist_dataset
         """
-        # Get embeddings
-        mean_emb, var_emb = self._get_embedding_(img_name,bbox)
         
-        dist = (torch.pow(self.means-mean_emb[None,:].T+1e-6, 2).sum(dim=0).sqrt())
-        _, ranks = torch.sort(dist, dim=0, descending=False)
-        if method == 'min_dist_NN':    
-            probs = self._min_dist_NN_(ranks, mean_emb, var_emb, num_NN, num_MC)
-        elif method == 'kNN_gauss_kernel':
-            probs = self._kNN_gauss_kernel_(ranks, mean_emb, var_emb, num_NN, dist_classes)
+        # Get embeddings
+        mean_emb, var_emb, backbone_emb = self._get_embedding_(img_name,bbox)
+        
+        if self.calibration_method == 'none':
+            
+            dist = (torch.pow(self.means-mean_emb[None,:].T+1e-6, 2).sum(dim=0).sqrt())
+            _, ranks = torch.sort(dist, dim=0, descending=False)
+            
+            if method == 'min_dist_NN':    
+                probs = self._min_dist_NN_(ranks, mean_emb, var_emb, num_NN, num_MC)
+            elif method == 'kNN_gauss_kernel':
+                probs = self._kNN_gauss_kernel_(ranks, mean_emb, var_emb, num_NN, dist_classes)
+            else:
+                raise ValueError('Method does not exist')
+        
+        elif (self.calibration_method == 'SWAG') | (self.calibration_method == 'MCDropout'):
+            num_samples = 20
+            
+            if self.calibration_method == 'MCDropout':
+                self.model.eval_with_dropout()
+            
+            probs_swag = {key:0 for key in np.unique(self.classes)}
+            for j in range(num_samples):
+                with torch.no_grad():
+                    if self.calibration_method == 'SWAG':
+                        if (self.out_rand_init is False):
+                            out = self.model.forward_head_with_swag(self.backbone_repr,j)
+                        out_emb = self.model.forward_head_with_swag(backbone_emb,j)
+                    else:
+                        if (self.out_rand_init is False):
+                            out = self.model.forward_head(self.backbone_repr,j)
+                        out_emb = self.model.forward_head(backbone_emb,j)
+                    
+                    # Store random init
+                    if self.out_rand is None: #Init random embedding database
+                        self.out_rand = torch.zeros(num_samples,out.shape[0],out.shape[1]).cuda()
+                    if (self.out_rand_init is False):
+                        self.out_rand[j] = out
+                    
+                    if (j == num_samples-1): #When initialized, set marker to True
+                        self.out_rand_init = True
+                    
+                    means_NN = self.out_rand[j][:,:-self.model.var_dim].T
+                    vars_NN = self.out_rand[j][:,-self.model.var_dim:].T
+                    mean_emb = out_emb[0,:-self.model.var_dim]
+                    var_emb = out_emb[0,-self.model.var_dim:]
+                    
+                    dist = (torch.pow(self.means-mean_emb[None,:].T+1e-6, 2).sum(dim=0).sqrt())
+                    _, ranks = torch.sort(dist, dim=0, descending=False)
+                
+                if method == 'min_dist_NN':    
+                    probs = self._min_dist_NN_(ranks, mean_emb, var_emb, num_NN, num_MC, 
+                                               means_NN[:,ranks[:num_NN]], 
+                                               vars_NN[:,ranks[:num_NN]])
+                elif method == 'kNN_gauss_kernel':
+                    probs = self._kNN_gauss_kernel_(ranks, mean_emb, var_emb, num_NN, 'all', 
+                                                    means_NN[:,ranks[:num_NN]], 
+                                                    vars_NN[:,ranks[:num_NN]])
+                else:
+                    raise ValueError('Method does not exist')
+                
+                for key in probs_swag:
+                    probs_swag[key] += probs[key]/num_samples
+               
+            probs = probs_swag
         else:
-            raise ValueError('Method does not exist')
-
+            raise ValueError(f"{self.calibration_method} calibration method is not implemented for this model type")
         return probs, mean_emb, var_emb
     
     def _extract_means_and_variances_(self): 
@@ -447,7 +527,9 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
                               transform=self.transformer_aug)    
         loader = torch.utils.data.DataLoader(
                                 OFL,
-                                batch_size=1, shuffle=False, num_workers=8, pin_memory=False
+                                batch_size=1, shuffle=False, 
+                                num_workers=np.min([8,multiprocessing.cpu_count()]), 
+                                pin_memory=False
             )
 
         logger.info("Extract means and variance for model data")
@@ -458,22 +540,49 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
         else:
             var_dim = int(self.params['dim_out']/2)
             
+        backbone_repr= None
+        
+        # ********************
+        # *** No balancing ***
+        # ********************
         with torch.no_grad():
-            if self.balanced_classes < 1:
+            if self.balanced_classes == 0:
                 logger.info("No balancing of classes")
                 qvecs = torch.zeros(self.params['dim_out']-var_dim, len(self.objects)).cuda()
                 qvars = torch.zeros(var_dim,len(self.objects)).cuda()
             
                 for i, input in enumerate(loader):
-                    output = self.model(input.cuda()).data.squeeze()
+                    if ((self.calibration_method == 'SWAG') | 
+                        (self.calibration_method == 'MCDropout')):
+                        o = self.model.forward_backbone(input.cuda())
+                        if i == 0: #init backbone representation tensor
+                            try:
+                                backbone_repr = torch.zeros(len(loader),o.shape[1],
+                                                                        o.shape[2],
+                                                                        o.shape[3]).cuda()
+                                mem_cuda = torch.cuda.memory_allocated() / 1024 / 1024 / 1024
+                                logger.info(f"Total memory consumption on Cuda: {mem_cuda:.3f}GB")
+                            except:
+                                raise MemoryError("Not enough memory on GPU for storing "+
+                                                    "backbone representations. Either turn" +
+                                                    "of SWAG calibration or lower the number"+
+                                                    " of images in model database (i.e. by"+ 
+                                                    " balancing the classes)")
+                        backbone_repr[i] = o[0]
+                        output = self.model.forward_head(o).data.squeeze()
+                    else:
+                        output = self.model(input.cuda()).data.squeeze()
                     qvecs[:, i] = output[:-var_dim]
                     qvars[:, i] = output[-var_dim:]
                     if (i+1) % 1000 == 0 or (i+1) == len(self.objects):
                         logger.info('>>>> {}/{} done... '.format(i+1, len(self.objects)))
             
                 classes = self.classes
-            
-            else:
+        
+            # *****************
+            # *** Balancing ***
+            # *****************
+            elif self.balanced_classes > 0:
                 logger.info(f"Balancing of classes: Total number of samples from each class will be "+
                             f"{self.balanced_classes}")
                 dist_of_classes = pd.value_counts(self.classes)
@@ -492,14 +601,33 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
                         sample_class = self.classes[r_ord[i]]
                         if classes_count[sample_class] < self.balanced_classes: # add object
                             
-                            if dist_of_classes[sample_class] <= self.balanced_classes: # no aug
+                            if dist_of_classes[sample_class] >= classes_count[sample_class]: # no aug
                                 input = OFL.__getitem__(r_ord[i])
                             else:
                                 input = OFL_aug.__getitem__(r_ord[i])
                             
                             # save output
                             input = input[None,:,:,:]
-                            output = self.model(input.cuda()).data.squeeze()
+                            if ((self.calibration_method == 'SWAG') | 
+                                (self.calibration_method == 'MCDropout')):
+                                o = self.model.forward_backbone(input.cuda())
+                                if count == 0: #init backbone representation tensor
+                                    try:
+                                        backbone_repr = torch.zeros(num_samples,o.shape[1],
+                                                                                o.shape[2],
+                                                                                o.shape[3]).cuda()
+                                        mem_cuda = torch.cuda.memory_allocated() / 1024 / 1024 / 1024
+                                        logger.info(f"Total memory consumption on Cuda: {mem_cuda:.3f}GB")
+                                    except:
+                                        raise MemoryError("Not enough memory on GPU for storing "+
+                                                          "backbone representations. Either turn" +
+                                                          "of SWAG calibration or lower the number"+
+                                                          " of images in model database (i.e. by"+ 
+                                                          " balancing the classes)")
+                                backbone_repr[count] = o[0]
+                                output = self.model.forward_head(o).data.squeeze()
+                            else:
+                                output = self.model(input.cuda()).data.squeeze()
                             qvecs[:, count] = output[:-var_dim]
                             qvars[:,count] = output[-var_dim:]
                             
@@ -510,11 +638,93 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
                             if (count) % 1000 == 0 or (count) == num_samples:
                                 logger.info('>>>> {}/{} done... '.format(count, num_samples))
                                 
+                        if count == num_samples:
+                            break;
+                        
                     if count == num_samples:
                         break;
             
+            # *****************************
+            # *** Upsampling to minimum ***
+            # *****************************
+            else:
+                upsampling_size = np.abs(self.balanced_classes)
+                logger.info(f"Upsampling of classes: The least number of samples from each class will be "+
+                        f"{upsampling_size}")
+                dist_of_classes = pd.value_counts(self.classes)
+                num_samples = sum([max(upsampling_size,dist_of_classes[i]) for i in dist_of_classes.index])
+                qvecs = torch.zeros(self.params['dim_out']-var_dim, num_samples).cuda()
+                qvars = torch.zeros(var_dim,num_samples).cuda()   
+                
+                # Add original
+                logger.info("Adding original images")
+                for i, input in enumerate(loader):
+                    if ((self.calibration_method == 'SWAG') | 
+                        (self.calibration_method == 'MCDropout')):
+                        o = self.model.forward_backbone(input.cuda())
+                        if i == 0: #init backbone representation tensor
+                            try:
+                                backbone_repr = torch.zeros(num_samples,o.shape[1],
+                                                                        o.shape[2],
+                                                                        o.shape[3]).cuda()
+                                mem_cuda = torch.cuda.memory_allocated() / 1024 / 1024 / 1024
+                                logger.info(f"Total memory consumption on Cuda: {mem_cuda:.3f}GB")
+                            except:
+                                raise MemoryError("Not enough memory on GPU for storing "+
+                                                    "backbone representations. Either turn" +
+                                                    "of SWAG calibration or lower the number"+
+                                                    " of images in model database (i.e. by"+ 
+                                                    " balancing the classes)")
+                                
+                        backbone_repr[i] = o[0]
+                        output = self.model.forward_head(o).data.squeeze()
+                    else:
+                        output = self.model(input.cuda()).data.squeeze()
+                    qvecs[:, i] = output[:-var_dim]
+                    qvars[:, i] = output[-var_dim:]
+                    if (i+1) % 1000 == 0 or (i+1) == len(self.objects):
+                        logger.info('>>>> {}/{} done... '.format(i+1, len(self.objects)))
+            
+                classes = self.classes
+                
+                count=sum(dist_of_classes)
+                
+                # add augmentations
+                logger.info("Upsampling images")
+                while True:
+                    r_ord = torch.randperm(len(self.objects))
+                    for i in range(len(self.objects)):
+                        sample_class = self.classes[r_ord[i]]
+                        if dist_of_classes[sample_class] < upsampling_size: # add object
+                            
+                            # Get augmentation
+                            input = OFL_aug.__getitem__(r_ord[i])
+                            
+                            # save output
+                            input = input[None,:,:,:]
+                            if ((self.calibration_method == 'SWAG') | 
+                                (self.calibration_method == 'MCDropout')):
+                                o = self.model.forward_backbone(input.cuda())
+                                backbone_repr[count] = o[0]
+                                output = self.model.forward_head(o).data.squeeze()
+                            else:
+                                output = self.model(input.cuda()).data.squeeze()
+                            qvecs[:, count] = output[:-var_dim]
+                            qvars[:,count] = output[-var_dim:]
+                            
+                            # add counts and class
+                            classes.append(sample_class)
+                            dist_of_classes[sample_class] += 1
+                            count += 1
+                            if (count) % 1000 == 0 or (count) == num_samples:
+                                logger.info('>>>> {}/{} done... '.format(count, num_samples))
+                                
+                        if count == num_samples:
+                            break;
+                    if count == num_samples:
+                        break;
         
-        return qvecs, qvars, classes
+        return qvecs, qvars, backbone_repr, classes
     
     def _get_test_file_storing_name_(self,num_NN,
                                      num_MC,
@@ -526,26 +736,30 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
                             f'{self.balanced_classes}_numNN{num_NN}_'+
                             f'numMC{num_MC}_{method}_{test_dataset}_'+
                             f'withOOD{self.with_OOD}_'+
-                            f'varType-{self.model.var_type}')
+                            f'varType-{self.model.var_type}_'+
+                            f'calibrationMethod-{self.calibration_method}')
         elif method == 'kNN_gauss_kernel':
             if dist_classes == 'all':
                 file_name = (f'{self.model_name}_{self.model_data}_'+
                                 f'{self.balanced_classes}_'+
                                 f'{method}_{dist_classes}_{test_dataset}_'+
                                 f'withOOD{self.with_OOD}_'+
-                                f'varType-{self.model.var_type}')
+                                f'varType-{self.model.var_type}_'+
+                                f'calibrationMethod-{self.calibration_method}')
             elif dist_classes == 'unif':
                 file_name = (f'{self.model_name}_{self.model_data}_'+
                                 f'{self.balanced_classes}_'+
                                 f'{method}_{dist_classes}_{test_dataset}_'+
                                 f'withOOD{self.with_OOD}_'+
-                                f'varType-{self.model.var_type}')
+                                f'varType-{self.model.var_type}_'+
+                                f'calibrationMethod-{self.calibration_method}')
             else: 
                 file_name = (f'{self.model_name}_{self.model_data}_'+
                                 f'{self.balanced_classes}_numNN{num_NN}_'+
                                 f'{method}_{dist_classes}_{test_dataset}_'+
                                 f'withOOD{self.with_OOD}_'+
-                                f'varType-{self.model.var_type}')
+                                f'varType-{self.model.var_type}_'+
+                                f'calibrationMethod-{self.calibration_method}')
         
         return file_name
     
@@ -554,16 +768,15 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
                      f'{str(self.balanced_classes)}_'+
                      f'withOOD{self.with_OOD}_'+
                      f'varType-{self.model.var_type}_')
-        
         return file_name
     
-    def _min_dist_NN_(self, ranks, mean_emb, var_emb, num_NN, num_MC):
+    def _min_dist_NN_(self, ranks, mean_emb, var_emb, num_NN, num_MC, means_NN=None, vars_NN=None):
         # extract num_NN nearest neighbours
         ranks = ranks[:num_NN]
-
         # Extract means, variance, and classes
-        means_NN = self.means[:,ranks].cuda()
-        vars_NN = self.vars[:,ranks].cuda()
+        if means_NN is None:
+            means_NN = self.means[:,ranks].cuda()
+            vars_NN = self.vars[:,ranks].cuda()
         classes_NN = [self.classes[i] for i in ranks]
         
         if self.model.var_type == 'iso':
@@ -602,32 +815,36 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
         
         return probs 
        
-    def _kNN_gauss_kernel_(self, ranks, mean_emb, var_emb, num_NN, dist_classes = 'unif'):
-        # Extract database images of interest
-        if dist_classes=='unif':
-            # Extract as many objects from each class as the one with the lowest count
-            min_samples_class = min(self.num_samples_classes.values())
-            ranks_new = np.zeros((self.num_classes*min_samples_class,))
-            ranks_dict = {}
-            for i, class_ in enumerate(self.num_samples_classes.keys()):
-                class_selections = np.random.choice(self.classes_idxs[class_],
-                                                        min_samples_class, False)
-                ranks_new[i*min_samples_class:(i+1)*min_samples_class] = class_selections
-                ranks_dict[class_] = class_selections
-        elif dist_classes=='nn':
-            # extract num_NN nearest neighbours
-            ranks_new = ranks[:num_NN].cpu().numpy()
-        elif dist_classes=='all':
-            # extract all 
-            ranks_new = ranks.cpu().numpy()
+    def _kNN_gauss_kernel_(self, ranks, mean_emb, var_emb, num_NN, dist_classes = 'unif', means_NN=None, vars_NN=None):
+        if means_NN is None:
+            # Extract database images of interest
+            if dist_classes=='unif':
+                # Extract as many objects from each class as the one with the lowest count
+                min_samples_class = min(self.num_samples_classes.values())
+                ranks_new = np.zeros((self.num_classes*min_samples_class,))
+                ranks_dict = {}
+                for i, class_ in enumerate(self.num_samples_classes.keys()):
+                    class_selections = np.random.choice(self.classes_idxs[class_],
+                                                            min_samples_class, False)
+                    ranks_new[i*min_samples_class:(i+1)*min_samples_class] = class_selections
+                    ranks_dict[class_] = class_selections
+            elif dist_classes=='nn':
+                # extract num_NN nearest neighbours
+                ranks_new = ranks[:num_NN].cpu().numpy()
+            elif dist_classes=='all':
+                # extract all 
+                ranks_new = ranks.cpu().numpy()
+            else:
+                raise ValueError("dist_classes not known - choose between [unif,nn,all]")
+        
+            # Extract means, variance, and classes
+            ranks_new = ranks_new.astype(int)
+            
+            means_NN = self.means[:,ranks_new].cuda()
+            vars_NN = self.vars[:,ranks_new].cuda()
+            classes_NN = [self.classes[i] for i in ranks_new]
         else:
-            raise ValueError("dist_classes not known - choose between [unif,nn,all]")
-    
-        # Extract means, variance, and classes
-        ranks_new = ranks_new.astype(int)
-        means_NN = self.means[:,ranks_new].cuda()
-        vars_NN = self.vars[:,ranks_new].cuda()
-        classes_NN = [self.classes[i] for i in ranks_new]
+            classes_NN = [self.classes[i] for i in ranks]
         
         # Extract the expected distance dimension wise (since isotropic gaussians) and sum up 
         means_per_dim_sub = torch.pow(torch.sub(means_NN.T,mean_emb),2)
@@ -661,7 +878,7 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
             
         return probs
     # --------------------------------------------------------------------------------------------
-    # ----------------------------------- Unsued functions ---------------------------------------
+    # ----------------------------------- Unused functions ---------------------------------------
     # -------------------------------------------------------------------------------------------- 
     def _min_dist_NN_test_time_sampling_(self, ranks, mean_emb, var_emb):
         #! DO NOT USE (Only for testing implementation time)
@@ -706,7 +923,8 @@ class ImageClassifier_Classic(ImageClassifier):
     def __init__(self, model_name: str,
                  model_type: str,
                  params: dict,
-                 model_data: str):
+                 model_data: str,
+                 calibration_method: str):
         """Image classifier model. Classic 
 
         Args:
@@ -722,9 +940,19 @@ class ImageClassifier_Classic(ImageClassifier):
         output_classes = ([class_ for class_ in all_classes if class_ 
                                     not in self.classes_not_trained_on]) 
         self.output_class_idx = [output_classes.index(class_) for class_ in self.unique_classes]
+        self.calibration_method = calibration_method
+        
+        if self.calibration_method == 'SWAG':
+            if self.model.with_swag == False:
+                raise ValueError("Model can not be evaulated with SWAG - does not exist")
+            else:
+                self.model.head_mean = torch.load(f'./models/swag_headers/{model_name}_mean_swag.pt')
+                self.model.head_std = torch.load(f'./models/swag_headers/{model_name}_var_swag.pt')
+            
+        
 
         
-    def get_probability_dist_dataset(self, test_dataset: str, calibration_method: str):
+    def get_probability_dist_dataset(self, test_dataset: str):
         """Calculates the probability distributiuon over classes trained on for a set of images
            defined by 'test_dataset'. Name of 'test_dataset' should be present in data/processed/.
 
@@ -740,7 +968,7 @@ class ImageClassifier_Classic(ImageClassifier):
         objects, bboxs, classes = self._extract_test_dataset_(test_dataset)
         
         # Get file names
-        file_name = self._get_test_file_storing_name_(calibration_method)
+        file_name = self._get_test_file_storing_name_()
         file_name_probs = f'./reports/probability_distributions_classic/' + file_name + '.csv'
         
         # If probs habe not already been calculated, extract them
@@ -754,7 +982,7 @@ class ImageClassifier_Classic(ImageClassifier):
                 # Get and save probs
                 obj = objects[i]
                 bbox = bboxs[i]
-                probs = self._get_probability_dist_(obj,bbox,calibration_method)
+                probs = self._get_probability_dist_(obj,bbox)
                 probs_df[i] = probs[self.output_class_idx]
 
                 if (i+1) % 100 == 0:
@@ -769,28 +997,65 @@ class ImageClassifier_Classic(ImageClassifier):
         return probs_df, objects, bboxs, classes  
         
         
-    def _get_test_file_storing_name_(self, calibration_method: str):
-        file_name = (f'{self.model_name}_{calibration_method}')
+    def _get_test_file_storing_name_(self):
+        file_name = (f'{self.model_name}_{self.calibration_method}')
         
         return file_name
         
         
-    def _get_probability_dist_(self, obj:str, bbox: list, calibration_method:str):
+    def _get_probability_dist_(self, obj:str, bbox: list):
         # Set image path
         img_path = self.ims_root + f'/{obj}'
         
-        if calibration_method == 'None':
+        if self.calibration_method == 'None':
             with torch.no_grad():
                 # Get image
                 img = image_object_loader(img_path,bbox,self.transformer)
                 img = img[None,:,:,:] #Expand dim
                 
                 # Get model output
-                probs = self.model(img.cuda()).squeeze().cpu().numpy()
+                probs = torch.softmax(self.model(img.cuda()).squeeze(),-1).cpu().numpy()
+        
+        elif self.calibration_method == 'MCDropout':
+            with torch.no_grad():
+                # Get image
+                img = image_object_loader(img_path,bbox,self.transformer)
+                img = img[None,:,:,:] #Expand dim
                 
+                # Get model output
+                backbone_repr = self.model.forward_backbone(img.cuda())
+                self.model.eval_with_dropout()
+                probs = torch.softmax(self.model.forward_head(backbone_repr).squeeze(),-1).cpu().numpy()
+                for i in range(24):
+                    probs += torch.softmax(self.model.forward_head(backbone_repr).squeeze(),-1).cpu().numpy()
+                    
+                probs = probs/25
+                self.model.eval()
+                
+        elif self.calibration_method == 'TempScaling':
+            with torch.no_grad():
+                # Get image
+                img = image_object_loader(img_path,bbox,self.transformer)
+                img = img[None,:,:,:] #Expand dim
+                
+                # Get model output
+                logits = self.model(img.cuda()).squeeze()
+                logits = logits/self.params['temp_opt']
+                probs = torch.softmax(logits,-1).cpu().numpy()
+
+        elif self.calibration_method == 'SWAG':
+            with torch.no_grad():
+                # Get image
+                img = image_object_loader(img_path,bbox,self.transformer)
+                img = img[None,:,:,:] #Expand dim
+                
+                # Get model output
+                o = self.model.forward_backbone(img.cuda())
+                logits = self.model.forward_head_with_swag(o).squeeze()
+                probs = torch.softmax(logits,-1).cpu().numpy()
         else: 
             raise ValueError("Unknown calibration method")
-                
+        
         return probs
             
 
@@ -798,7 +1063,8 @@ class ImageClassifier_Classic(ImageClassifier):
 def init_classifier_model(model: str,
                           model_data: str,
                           with_OOD: bool = False,
-                          balanced_classes: int = 0):
+                          balanced_classes: int = 0,
+                          calibration_method = 'None'):
     # Load model params
     f = open(f'./models/params/{model}.json',)
     params = json.load(f)
@@ -811,12 +1077,14 @@ def init_classifier_model(model: str,
                                                          params,
                                                          model_data,
                                                          with_OOD,
-                                                         balanced_classes)
+                                                         balanced_classes,
+                                                         calibration_method)
     elif model_type == 'Classic':
         classifier = ImageClassifier_Classic(model,
                                              model_type,
                                              params,
-                                             model_data)
+                                             model_data,
+                                             calibration_method)
     else:
         raise ValueError("Model Type in params is unknown")
     

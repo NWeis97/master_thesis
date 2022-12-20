@@ -7,6 +7,7 @@ import numpy as np
 import pdb
 import warnings
 import matplotlib.lines as mlines
+import torch
 
 # tSNE and PCA plot 
 from sklearn.manifold import TSNE
@@ -60,10 +61,14 @@ def print_PCA_tSNE_plot(data: np.array ,qvars: np.array, classes: list, epoch: i
     
     max_size = 10*size*2
     min_size = size/4*2
-    df_subset['var'] = qvars/varP
-    df_subset['var'] = (df_subset['var']-np.min(df_subset['var']))/(np.max(df_subset['var'])-
-                                                                    np.min(df_subset['var']))
-    df_subset['var'] = min_size + df_subset['var'] * (max_size-min_size)
+    df_subset['var_rat'] = qvars/varP
+    df_subset['var'] = df_subset['var_rat'].copy()
+    min_var =  min(df_subset['var_rat'])
+    max_var = max(df_subset['var_rat'])
+    df_subset['var'][df_subset['var_rat']<=1] = min_size + ((df_subset['var_rat'][df_subset['var_rat']<=1]-
+                                                        min_var)/(1-min_var)*(size-min_size))
+    df_subset['var'][df_subset['var_rat']>1] = size + ((df_subset['var_rat'][df_subset['var_rat']>1]-
+                                                         1)/(max_var-1)*(max_size-size))                                                    
 
     # Marker types
     marker_t = []
@@ -188,7 +193,7 @@ def print_PCA_tSNE_plot(data: np.array ,qvars: np.array, classes: list, epoch: i
 
 
 def print_tSNE_plot_with_images(data: np.array, objects: list, bbox: list, classes: list, 
-                                img_size: int, path: str, size: float=0.15, perp: int=15, 
+                                img_size: int, path: str, size: float=0.1, perp: int=15, 
                                 n_iter: int=2000, lr: int=200, early_ex: int=10, init: str='pca'):
     """This function makes a scatterplot of the embedding space of *data* with pseudo-variances
        *qvars*
@@ -418,16 +423,23 @@ def image_object_full_bbox_resize_class(path,bbox,img_size,t_class,
     return concat_img
 
 
-def visualize_embedding_space(classifier: ImageClassifier):
+def visualize_embedding_space(classifier: ImageClassifier, means: torch.Tensor=None, 
+                                                           vars: torch.Tensor=None,
+                                                           true_classes: list = None):
     # Extract embeddings for 30 objects from same class in embedding space
     num_classes_samples = 30  
     classes_unique = (np.sort(pd.unique(classifier.classes)))
     classes = []
     
-    means_list = classifier.means.to('cpu').numpy()
-    vars_list = classifier.vars.to('cpu').numpy()
-    classes_list = np.array(classifier.classes)
-    
+    if means is None:
+        means_list = classifier.means.to('cpu').numpy()
+        vars_list = classifier.vars.to('cpu').numpy()
+        classes_list = np.array(classifier.classes)
+    else:
+        means_list = means.cpu().numpy()
+        vars_list = vars.cpu().numpy()
+        classes_list = np.array(true_classes)
+        
     means = np.zeros((means_list.shape[0], num_classes_samples*len(classes_unique)))
     vars = np.zeros((num_classes_samples*len(classes_unique),))
     count = 0
@@ -486,7 +498,7 @@ def calibration_plots(cali_plot_df_acc: pd.DataFrame,
         sizes = size_min + (size_max-size_min)*sizes/100
         sizes = sizes.astype(float)
         
-        if (class_=='All') or (class_=='Class_mean'):
+        if (class_=='All (WECE)') or (class_=='Class_mean (AECE)    '):
             color = '#008000'
         elif class_[-4:]=='_OOD':
             color = '#8C000F'
@@ -496,6 +508,7 @@ def calibration_plots(cali_plot_df_acc: pd.DataFrame,
         y = cali_plot_df_acc[class_]
         std = cali_plot_df_acc[class_]*(1-cali_plot_df_acc[class_])/num_samples_bins[class_]
         std = np.sqrt(std.fillna(100))
+        std[std==0] = 1
 
          # Add reference lines
         x_opt = np.arange(0,1.01,0.01)
@@ -668,17 +681,28 @@ def UCE_plots(uncert_cali_plot_df: pd.DataFrame):
     return fig
 
 
-def visualize_embedding_space_with_images(classifier: ImageClassifier):
-    # Extract embeddings for 10 objects from same class in embedding space
+def visualize_embedding_space_with_images(classifier: ImageClassifier, means: torch.Tensor=None, 
+                                                           vars: torch.Tensor=None,
+                                                           true_classes: list = None,
+                                                           objects: list = None,
+                                                           bboxs: list = None):
+    # Extract embeddings for 3 objects from same class in embedding space
     num_classes_samples = 3
     classes_unique = (np.sort(pd.unique(classifier.classes)))
     classes = []
     
-    objects_list = classifier.objects
-    bboxs_list = classifier.bbox
-    means_list = classifier.means.to('cpu').numpy()
-    vars_list = classifier.vars.to('cpu').numpy()
-    classes_list = np.array(classifier.classes)
+    if means is None:
+        means_list = classifier.means.to('cpu').numpy()
+        vars_list = classifier.vars.to('cpu').numpy()
+        classes_list = np.array(classifier.classes)
+        objects_list = classifier.objects
+        bboxs_list = classifier.bbox
+    else:
+        means_list = means.cpu().numpy()
+        vars_list = vars.cpu().numpy()
+        classes_list = np.array(true_classes)
+        objects_list = objects
+        bboxs_list = bboxs
     
     means = np.zeros((means_list.shape[0], num_classes_samples*len(classes_unique)))
     objects = []

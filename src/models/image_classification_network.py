@@ -43,6 +43,7 @@ class ImageClassifierNet_BayesianTripletLoss(nn.Module):
         self.const_eval_mode = meta['const_eval_mode']
         self.fixed_backbone = meta['fixed_backbone']
         self.var_type = meta['var_type']
+        self.with_swag = meta['with_swag']
         self.meta = meta
         
         # Define mean and variance dims
@@ -75,11 +76,23 @@ class ImageClassifierNet_BayesianTripletLoss(nn.Module):
             exit()
 
         # Layers mean and variance head
-        self.mean_conv2d = nn.Conv2d(meta['outputdim_bb'],self.mean_layers_dim[0],
-                                    kernel_size=(1,1),stride=(1,1),padding=(0,0))
+        if self.mean_layers_dim != []:
+            self.mean_conv2d = nn.Conv2d(meta['outputdim_bb'],self.mean_layers_dim[0],
+                                        kernel_size=(1,1),stride=(1,1),padding=(0,0))
+            self.mean_batchnorm2d = nn.BatchNorm2d(self.mean_layers_dim[0])
+        else:
+            self.mean_conv2d = nn.Conv2d(meta['outputdim_bb'],self.mean_dim,
+                                        kernel_size=(1,1),stride=(1,1),padding=(0,0))
+            self.mean_batchnorm2d = nn.BatchNorm2d(self.mean_dim)
         
-        self.var_conv2d = nn.Conv2d(meta['outputdim_bb'],self.var_layers_dim[0],
-                                    kernel_size=(1,1),stride=(1,1),padding=(0,0))
+        if self.var_layers_dim != []:
+            self.var_conv2d = nn.Conv2d(meta['outputdim_bb'],self.var_layers_dim[0],
+                                        kernel_size=(1,1),stride=(1,1),padding=(0,0))
+            self.var_batchnorm2d = nn.BatchNorm2d(self.var_layers_dim[0])
+        else:
+            self.var_conv2d = nn.Conv2d(meta['outputdim_bb'],self.var_dim,
+                                        kernel_size=(1,1),stride=(1,1),padding=(0,0))
+            self.var_batchnorm2d = nn.BatchNorm2d(self.var_dim)
         
         # Initialize with xavier_normal
         nn.init.xavier_normal_(self.mean_conv2d.weight,gain=self.init_gain)
@@ -87,24 +100,23 @@ class ImageClassifierNet_BayesianTripletLoss(nn.Module):
         nn.init.constant_(self.mean_conv2d.bias,0.01)
         nn.init.constant_(self.var_conv2d.bias,0.01)
 
-
         self.mean_fc = nn.ModuleList()
         self.var_fc = nn.ModuleList()
         self.mean_batchnorm = []
         self.var_batchnorm = []
         # Get fc layers (mean)
         for i,layer in enumerate(self.mean_layers_dim[1:]):
-            self.mean_fc.append(nn.Linear(self.mean_layers_dim[i],layer).cuda())
-            nn.init.xavier_normal_(self.mean_fc[i].weight,gain=self.init_gain)
-            nn.init.constant_(self.mean_fc[i].bias,0.01)
-            self.mean_batchnorm.append(nn.BatchNorm1d(layer))
+            self.mean_fc.append(nn.ModuleDict({'lin':nn.Linear(self.mean_layers_dim[i],layer),
+                                 'batch':nn.BatchNorm1d(layer)}))
+            nn.init.xavier_normal_(self.mean_fc[i]['lin'].weight,gain=self.init_gain)
+            nn.init.constant_(self.mean_fc[i]['lin'].bias,0.01)
 
         # Get fc layers (var)
         for i,layer in enumerate(self.var_layers_dim[1:]):
-            self.var_fc.append(nn.Linear(self.var_layers_dim[i],layer).cuda())
-            nn.init.xavier_normal_(self.var_fc[i].weight,gain=self.init_gain)
-            nn.init.constant_(self.var_fc[i].bias,0.01)
-            self.var_batchnorm.append(nn.BatchNorm1d(layer))
+            self.var_fc.append(nn.ModuleDict({'lin':nn.Linear(self.var_layers_dim[i],layer),
+                                 'batch':nn.BatchNorm1d(layer)}))
+            nn.init.xavier_normal_(self.var_fc[i]['lin'].weight,gain=self.init_gain)
+            nn.init.constant_(self.var_fc[i]['lin'].bias,0.01)
     
         # Output layers
         self.mean_out = nn.Linear(self.mean_layers_dim[-1],self.mean_dim)
@@ -115,6 +127,13 @@ class ImageClassifierNet_BayesianTripletLoss(nn.Module):
 
         # Softplus for estimating sigma2
         self.softplus = nn.Softplus(1,20)
+        
+        # Init swag
+        if self.with_swag:
+            self.head_mean__mean = []
+            self.head_mean__var = []
+            self.head_std__mean = []
+            self.head_std__var = []
 
     def forward(self, x):
         o = self.forward_backbone(x)
@@ -128,29 +147,43 @@ class ImageClassifierNet_BayesianTripletLoss(nn.Module):
         
         return o
     
-    def forward_head(self, o):
+    def forward_head(self, o, random_state=None):
+        if random_state is None:
+            torch.manual_seed(torch.seed())
+        else:
+            torch.manual_seed(random_state)
+            
         # divide into mean and variance head
         m = self.mean_conv2d(o)
+        m = self.mean_batchnorm2d(m)
         m = self.activation_fn(m)
         m = self.dropout(m)
         m = GeM(m,self.pooling['mGeM_p'])
         m = m.squeeze()
+        if len(m.shape) == 1:
+            m = m[None,:]
+        
 
         v = self.var_conv2d(o)
+        v = self.var_batchnorm2d(v)
         v = self.activation_fn(v)
         v = self.dropout(v)
         v = GeM(v,self.pooling['vGeM_p'])
         v = v.squeeze()
+        if len(v.shape) == 1:
+            v = v[None,:]
         
         # Make mean and var embeddings
-        for layer in self.mean_fc:
-            m = layer(m)
+        for i,layer in enumerate(self.mean_fc):
+            m = layer['lin'](m)
+            m = layer['batch'](m)
             m = self.activation_fn(m)
             m = self.dropout(m)
         m = self.mean_out(m)
 
-        for layer in self.var_fc:
-            v = layer(v)
+        for i,layer in enumerate(self.var_fc):
+            v = layer['lin'](v)
+            v = layer['batch'](v)
             v = self.activation_fn(v)
             v = self.dropout(v)
         v = self.var_out(v)
@@ -164,6 +197,32 @@ class ImageClassifierNet_BayesianTripletLoss(nn.Module):
             out = torch.concat([m,v],dim=1)
             
         return out
+    
+    
+    def forward_head_with_swag(self,o,random_state=None):
+        if random_state is None:
+            torch.manual_seed(torch.seed())
+        else:
+            torch.manual_seed(random_state)
+        
+        count_mean = 0
+        count_var = 0
+        for idx, (name, param) in enumerate(self.named_parameters()):
+            if name.split('.')[0] != 'features':
+                if name.split('_')[0] == 'mean':
+                    sample = torch.distributions.Normal(self.head_mean__mean[count_mean],
+                                                        self.head_std__mean[count_mean]).rsample()
+                    param.data = sample
+                    count_mean += 1
+                else:
+                    sample = torch.distributions.Normal(self.head_mean__var[count_var],
+                                                        self.head_std__var[count_var]).rsample()
+                    param.data = sample
+                    count_var += 1
+        
+        output = self.forward_head(o)
+              
+        return output
 
     def __repr__(self):
         tmpstr = super(ImageClassifierNet_BayesianTripletLoss, self).__repr__()[:-1]
@@ -209,6 +268,38 @@ class ImageClassifierNet_BayesianTripletLoss(nn.Module):
             else:
                 module.train(mode)
         return self
+    
+    
+    def eval_with_dropout(self, mode: bool = True):
+        """Sets the module in training evaluation mode, but keep dropout active.
+
+        This has any effect only on certain modules. See documentations of
+        particular modules for details of their behaviors in training/evaluation
+        mode, if they are affected, e.g. :class:`Dropout`, :class:`BatchNorm`,
+        etc.
+
+        Args:
+            mode (bool): whether to set training mode (``True``) or evaluation
+                         mode (``False``). Default: ``True``.
+
+        Returns:
+            Module: self
+        """
+        
+        mode_train = not mode
+        if not isinstance(mode, bool):
+            raise ValueError("evaluation mode is expected to be boolean")
+        self.training = mode_train
+        for name, module in self.named_children():
+            if (self.const_eval_mode == True) & (name == 'features'):
+                module.train(False)
+            else:
+                if isinstance(module, torch.nn.Dropout):
+                    module.train(True)
+                    module.p = 0.25
+                else:
+                    module.train(mode_train)
+        return self
 
 
 
@@ -225,6 +316,7 @@ class ImageClassifierNet_Classic(nn.Module):
         self.dropout_p = meta['dropout']
         self.const_eval_mode = meta['const_eval_mode']
         self.fixed_backbone = meta['fixed_backbone']
+        self.with_swag = meta['with_swag']
         self.meta = meta
 
         # Activation function
@@ -246,6 +338,7 @@ class ImageClassifierNet_Classic(nn.Module):
         # Layers mean and variance head
         self.conv2d = nn.Conv2d(meta['outputdim_bb'],self.layers_dim[0],
                                     kernel_size=(1,1),stride=(1,1),padding=(0,0))
+        self.batchnorm2d = nn.BatchNorm2d(self.layers_dim[0])
         
         
         # Initialize with xavier_normal
@@ -257,19 +350,22 @@ class ImageClassifierNet_Classic(nn.Module):
         self.batchnorm = []
         # Get fc layers (mean)
         for i,layer in enumerate(self.layers_dim[1:]):
-            self.fc.append(nn.Linear(self.layers_dim[i],layer).cuda())
+            self.fc.append(nn.ModuleDict({'lin':nn.Linear(self.layers_dim[i],layer),
+                                 'batch':nn.BatchNorm1d(layer)}))
             nn.init.xavier_normal_(self.fc[i].weight,gain=self.init_gain)
             nn.init.constant_(self.fc[i].bias,0.01)
-            self.batchnorm.append(nn.BatchNorm1d(layer))
     
         # Output layers
         self.out = nn.Linear(self.layers_dim[-1],self.num_classes)
 
         # Reguralization
         self.dropout = nn.Dropout(self.dropout_p)
-
-        # Softmax for estimating sigma2
-        self.softmax = nn.Softmax(dim=1)
+        
+        # init swag mean and variance
+        if self.with_swag == True:
+            self.head_mean = []
+            self.head_std = []
+        
 
     def forward(self, x):
         o = self.forward_backbone(x)
@@ -286,14 +382,18 @@ class ImageClassifierNet_Classic(nn.Module):
     def forward_head(self, o):
         # divide into mean and variance head
         m = self.conv2d(o)
+        m = self.batchnorm2d(m)
         m = self.activation_fn(m)
         m = self.dropout(m)
         m = GeM(m,self.pooling)
         m = m.squeeze()
+        if len(m.shape) == 1:
+            m = m[None,:]
         
         # Make mean and var embeddings
-        for layer in self.fc:
-            m = layer(m)
+        for i,layer in enumerate(self.fc):
+            m = layer['lin'](m)
+            m = layer['batch'](m)
             m = self.activation_fn(m)
             m = self.dropout(m)
         out = self.out(m)
@@ -302,10 +402,25 @@ class ImageClassifierNet_Classic(nn.Module):
         if len(m.shape) == 1:
             out = out[None,:]
         
-        # Get class probs
-        out = self.softmax(out)
-        
         return out
+
+    def forward_head_with_swag(self,o):
+        for j in range(25):
+            count = 0
+            for idx, (name, param) in enumerate(self.named_parameters()):
+                if name.split('.')[0] != 'features':
+                    sample = torch.distributions.Normal(self.head_mean[count],
+                                                        self.head_std[count]).rsample()
+                    param.data = sample
+                    count += 1
+            
+            output = self.forward_head(o)
+            if j == 0:
+                probs = torch.softmax(output,dim=-1)
+            else:
+                probs = (probs*j+torch.softmax(output,dim=-1))/(j+1)
+                
+        return torch.log(probs)
 
     def __repr__(self):
         tmpstr = super(ImageClassifierNet_BayesianTripletLoss, self).__repr__()[:-1]
@@ -348,6 +463,37 @@ class ImageClassifierNet_Classic(nn.Module):
                 module.train(False)
             else:
                 module.train(mode)
+        return self
+    
+    def eval_with_dropout(self, mode: bool = True):
+        """Sets the module in training evaluation mode, but keep dropout active.
+
+        This has any effect only on certain modules. See documentations of
+        particular modules for details of their behaviors in training/evaluation
+        mode, if they are affected, e.g. :class:`Dropout`, :class:`BatchNorm`,
+        etc.
+
+        Args:
+            mode (bool): whether to set training mode (``True``) or evaluation
+                         mode (``False``). Default: ``True``.
+
+        Returns:
+            Module: self
+        """
+        
+        mode_train = not mode
+        if not isinstance(mode, bool):
+            raise ValueError("evaluation mode is expected to be boolean")
+        self.training = mode_train
+        for name, module in self.named_children():
+            if (self.const_eval_mode == True) & (name == 'features'):
+                module.train(False)
+            else:
+                if isinstance(module, torch.nn.Dropout):
+                    module.train(True)
+                    module.p = 0.25
+                else:
+                    module.train(mode_train)
         return self
 
 
@@ -393,6 +539,7 @@ def init_network_BayesianTripletLoss(params: dict):
     dim_out = params.get('dim_out', 50)
     dropout = params.get('dropout', 0.25)
     var_type = params.get('var_type', "iso")
+    with_swag = params.get('with_swag', False)
     
     # get output dimensionality size
     dim = OUTPUT_DIM[architecture]
@@ -446,7 +593,8 @@ def init_network_BayesianTripletLoss(params: dict):
         'outputdim_bb' : dim,
         'outputdim': dim_out,
         'dropout': dropout,
-        'var_type': var_type
+        'var_type': var_type,
+        'with_swag': with_swag
     }
 
     # create a generic image retrieval network
@@ -477,6 +625,7 @@ def init_network_Classic(params: dict):
     pooling = params.get('pooling',2)
     num_classes = params.get('num_classes', None)
     dropout = params.get('dropout', 0.25)
+    with_swag = params.get('with_swag',False)
     
     # get output dimensionality size
     dim = OUTPUT_DIM[architecture]
@@ -529,7 +678,8 @@ def init_network_Classic(params: dict):
         'pooling': pooling,
         'outputdim_bb' : dim,
         'num_classes': num_classes,
-        'dropout': dropout
+        'dropout': dropout,
+        'with_swag': with_swag
     }
 
     # create a generic image retrieval network

@@ -1,10 +1,10 @@
 #!/bin/bash
-export R=_BTM_iso2
+export R=3
 ### NAME OF FILE
-#BSUB -J config_BTM_iso2
+#BSUB -J config3
 ### OUTPUT AND ERROR FILE
-#BSUB -o config_hpc/config_BTM_iso2.out
-#BSUB -e config_hpc/config_BTM_iso2.err
+#BSUB -o config_hpc/config3.out
+#BSUB -e config_hpc/config3.err
 ### QUEUE TO BE USED
 #BSUB -q gpuv100
 ### gpu memory

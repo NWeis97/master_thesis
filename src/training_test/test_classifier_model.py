@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import torch
 import ast
+import pickle
 
 # Own imoprts
 from src.models.image_classifier import ImageClassifier, init_classifier_model
@@ -25,7 +26,8 @@ from src.utils.performance_measures import (confidence_vs_accuracy,
                                             calc_MaP,
                                             calc_accuracy,
                                             calc_ECE,
-                                            calc_ACE)
+                                            calc_ACE,
+                                            get_entropies)
 
 
 def main(args):
@@ -46,6 +48,7 @@ def main(args):
     method = args.method
     with_OOD = ast.literal_eval(args.with_OOD)
     dist_classes = args.dist_classes
+    calibration_method = args.calibration_method
     
     # Init wandb
     wandb.init(
@@ -59,7 +62,8 @@ def main(args):
                         "num_MC": num_MC,
                         "method": method,
                         "with_OOD": with_OOD,
-                        "dist_classes": dist_classes},
+                        "dist_classes": dist_classes,
+                        "calibration_method": calibration_method},
                 job_type="Test"
         )
     
@@ -67,7 +71,8 @@ def main(args):
     classifier = init_classifier_model(classifier_model,
                                        database_model,
                                        with_OOD,
-                                       balanced_classes)
+                                       balanced_classes,
+                                       calibration_method=calibration_method)
     
     # Calculate probabilities
     (probs_df, 
@@ -75,7 +80,37 @@ def main(args):
      bboxs, 
      true_classes) = classifier.get_probability_dist_dataset(test_dataset,num_NN,
                                                              num_MC,method,dist_classes)
+     
+     
+    #* -------------------------------------------
+    #* ------ Remove classes not trained on ------
+    #* -------------------------------------------
+    if with_OOD == False:
+        classifier.classes_not_trained_on = ['dog']
+        OOD_true_classes_idx = ([i for i in range(len(true_classes)) 
+                                 if true_classes[i] in classifier.classes_not_trained_on])
+        OOD_probs_df = probs_df.iloc[:,OOD_true_classes_idx]
+        #OOD_objects = [objects[i] for i in range(len(true_classes)) if i in OOD_true_classes_idx]
+        #OOD_bboxs = [bboxs[i] for i in range(len(true_classes)) if i in OOD_true_classes_idx]
+        #OOD_true_classes = ([true_classes[i] for i in range(len(true_classes)) 
+        #                    if i in OOD_true_classes_idx])
+        OOD_probs_df.columns = np.arange(0,len(OOD_probs_df.columns),1)
+        
+        ID_true_classes_idx = [i for i in range(len(true_classes)) if i not in OOD_true_classes_idx]
+        probs_df = probs_df.iloc[:,ID_true_classes_idx]
+        objects = [objects[i] for i in range(len(true_classes)) if i in ID_true_classes_idx]
+        bboxs = [bboxs[i] for i in range(len(true_classes)) if i in ID_true_classes_idx]
+        true_classes = ([true_classes[i] for i in range(len(true_classes)) 
+                            if i in ID_true_classes_idx])
+        probs_df.columns = np.arange(0,len(probs_df.columns),1)
     
+    # Get entropies of OOD objects
+    if with_OOD == False:
+        entropies_OOD = get_entropies(OOD_probs_df)
+        entropies_ID = get_entropies(probs_df)
+    else:
+        entropies_ID = get_entropies(probs_df)
+        entropies_OOD = []
     
     #* --------------------------------------
     #* ------ Get Performance Measures ------
@@ -126,6 +161,13 @@ def main(args):
     uncert_inacc_df = uncertain_when_inaccurate(probs_df, true_classes,
                                                 len(classifier.unique_classes))
     
+    # Get entropies of OOD objects
+    if with_OOD == False:
+        entropies_OOD = get_entropies(OOD_probs_df)
+        entropies_ID = get_entropies(probs_df)
+    else:
+        entropies_ID = get_entropies(probs_df)
+        entropies_OOD = []
     
     #* ---------------------------------
     #* ------ Make Visualizations ------
@@ -136,8 +178,12 @@ def main(args):
     cali_plots_ace = calibration_plots(ACE_acc_df, ACE_conf_df, ACE_num_each_bin, True)
     
     # Make illustrations of embedding space with classes
-    fig_tsne_test, fig_pca_test = visualize_embedding_space(classifier)
-    fig_tsne_images, fig_pca_images = visualize_embedding_space_with_images(classifier)
+    means, vars = classifier.get_embeddings_of_test_dataset(test_dataset)
+    fig_tsne_test, fig_pca_test = visualize_embedding_space(classifier, means, vars, true_classes)
+    fig_tsne_images, fig_pca_images = visualize_embedding_space_with_images(classifier, means, vars,
+                                                                            true_classes,
+                                                                            objects,
+                                                                            bboxs)
     
     # Create precision/recall plots
     fig_aP = precision_recall_plots(aP_plotting, aP_df)
@@ -147,7 +193,6 @@ def main(args):
     
     # Extract variances for dataset
     pred_classes = probs_df.idxmax()
-    _, vars = classifier.get_embeddings_of_test_dataset(test_dataset)
     dict_vars = sort_idx_on_metric_per_class(vars, true_classes)
     dict_uncertainties = sort_idx_on_metric_per_class(uncertainties, true_classes)
     
@@ -243,26 +288,67 @@ def main(args):
     
     
     
+    #* ---------------------------------------
+    #* ------ Log Results to local file ------
+    #* ---------------------------------------
+    metrics_dict = {'Model Type': classifier.model_type,
+                    'Method': method,
+                    'Calibration Method': calibration_method,
+                    'With_OOD': with_OOD,
+                    'Seed': classifier.params['seed'],
+                    'MaP': MaP,
+                    'Accuracy top1': acc_top1,
+                    'Accuracy top2': acc_top2,
+                    'Accuracy top3': acc_top3,
+                    'Accuracy top5': acc_top5,
+                    'AECE': AECE,
+                    'WECE': WECE,
+                    'CECE': CECE,
+                    'ACE': ACE,
+                    'UCE': UCE,
+                    'AvU_simple_thresh': AvU_simple_thresh,
+                    'AvU_best_thresh': AvU_best_thresh,
+                    'Uncertainty_simple_thresh': simple_thresh,
+                    'Uncertainty_best_thresh': best_thresh,
+                    'AUC_AvU': AUC_AvU}
+    
+    graphs_dict = {'Model Type': classifier.model_type,
+                   'Method': method,
+                   'Calibration Method': calibration_method,
+                   'With_OOD': with_OOD,
+                   'Seed': classifier.params['seed'],
+                   'conf_vs_acc': conf_vs_acc_df,
+                   'Accurate when certain_unc_thresh': acc_cert_df,
+                   'Uncertain when inaccurate_thresh_unc': uncert_inacc_df,
+                   'Accurat_certain_ratio': ACr_list,
+                   'Inaccurat_certain_ratio': ICr_list,
+                   'Class Metrics': class_metrics,
+                   'Class Calibration Acc': cali_plot_df_acc,
+                   'Class Calibration Conf': cali_plot_df_conf,
+                   'Class Calibration count': num_each_bin_df,
+                   'Class Calibration Acc (ACE)': ACE_acc_df,
+                   'Class Calibration Conf (ACE)': ACE_conf_df,
+                   'Class Calibration count (ACE)': ACE_num_each_bin,
+                   'Uncertainty Calibration': UCE_df,
+                   'AvU_simple_df': AvU_simple_df,
+                   'AvU_best_df': AvU_best_df,
+                   'Entropies_ID': entropies_ID,
+                   'Entropies_OOD': entropies_OOD}
+    
+     # Extract args
+    file_name = f"{classifier_model}_{method}_{calibration_method}_{with_OOD}"
+    with open(f'reports/test_results/{file_name}_metrics_dict.pickle', 'wb') as f:
+        pickle.dump(metrics_dict, f)
+    with open(f'reports/test_results/{file_name}_graphs_dict.pickle', 'wb') as f:
+        pickle.dump(graphs_dict, f)
+    
+    
     #* ----------------------------------
     #* ------ Log Results to WandB ------
     #* ----------------------------------
     
     # Log simple performance measures
-    wandb.log({'MaP':MaP,
-               'Accuracy top1': acc_top1,
-               'Accuracy top2': acc_top2,
-               'Accuracy top3': acc_top3,
-               'Accuracy top5': acc_top5,
-               'AECE': AECE,
-               'WECE': WECE,
-               'CECE': CECE,
-               'ACE': ACE,
-               'UCE': UCE,
-               'AvU_simple_thresh': AvU_simple_thresh,
-               'AvU_best_thresh': AvU_best_thresh,
-               'Uncertainty_simple_thresh': simple_thresh,
-               'Uncertainty_best_thresh': best_thresh,
-               'AUC_AvU': AUC_AvU})
+    wandb.log(metrics_dict)
  
  
     # Log class-specific metrics
@@ -352,6 +438,7 @@ if __name__ == '__main__':
     args_parser.add_argument("--method", help="Probability calculation method")
     args_parser.add_argument("--with_OOD", help="Include OOD classes")
     args_parser.add_argument("--dist_classes", help="For knn-gauss-kernel")
+    args_parser.add_argument("--calibration_method", help="Calibration method")
     args = args_parser.parse_args()
     
     

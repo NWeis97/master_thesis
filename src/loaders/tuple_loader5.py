@@ -55,8 +55,8 @@ class TuplesDataset_2class(data.Dataset):
                  poolsize_class:int = 200, transform: transforms=None, keep_prev_tuples: bool=True, 
                  classes_not_trained_on: list=[], approx_similarity: bool=True):
 
-        if not (mode == 'train' or mode == 'val'):
-            raise(RuntimeError("MODE should be either train or val, passed as string"))
+        if not (mode == 'train' or mode == 'val' or mode == 'test' or mode == 'trainval'):
+            raise(RuntimeError("MODE should be either train, val, test, trainval"))
 
         # Define attributes
         self.mode = mode
@@ -67,56 +67,35 @@ class TuplesDataset_2class(data.Dataset):
         self.transform = transform
         self.print_freq = 500
         self.require_grad = True
-        if self.mode == 'val':
+        if (self.mode == 'val') | (self.mode == 'test'):
             self.require_grad = False
-        
-        # Set paths to data
-        data_root = './data/processed/'
-        db_root = os.path.join(data_root, self.mode+'.json')
-        self.ims_root = './data/raw/JPEGImages/'
-
-        # Load database
-        f = open(db_root)
-        db = json.load(f)
-        f.close()
         
         # Select subset of classes
         class_list = ['train','cow','tvmonitor','boat','cat','person','aeroplane','bird',
                       'dog','sheep','bicycle','bus','motorbike','bottle','chair',
                       'diningtable','pottedplant','sofa','horse','car']
-        db = ({class_:db[class_] for class_ in class_list if 
-                                     class_ not in self.classes_not_trained_on})
         self.classes_trained_on = ([class_ for class_ in class_list if class_ 
                                     not in self.classes_not_trained_on]) 
-        # Extract list of classes
-        class_num = [[key]*len(db[key]) for key in db.keys()]
-        self.classes = []
-        [self.classes.extend(class_list) for class_list in class_num]
-
-        # Extract list of images
-        obj_names = [[db[key][j]['img_name'] for j in range(len(db[key]))] for key in db.keys()]
-        self.objects = []
-        [self.objects.extend(image_list) for image_list in obj_names]
-
-        # Extract list of bbox
-        bbox_list = [[db[key][j]['bbox'] for j in range(len(db[key]))] for key in db.keys()]
-        self.bbox = []
-        [self.bbox.extend(bbox) for bbox in bbox_list]
         
-        # Get index hash for each class
-        self.class_hash = {}
-        count = 0
-        for key in db.keys():
-            self.class_hash[key] = (count,count+len(db[key]))
-            count += len(db[key])
+        
+        
+        # Extract data
+        self.data_root = './data/processed/'
+        self.ims_root = './data/raw/JPEGImages/'
+        (self.objects, 
+         self.bbox, 
+         self.classes, 
+         self.class_hash) = self._extract_dataset_()   
+        
 
         # size of training subset for an epoch
         self.nnum = nnum
         self.poolsize_class = poolsize_class
-        self.poolsize = np.min([self.poolsize_class*len(db.keys()),len(self.objects)])
+        self.poolsize = np.min([self.poolsize_class*len(self.classes_trained_on),len(self.objects)])
         self.qsize_class = qsize_class
         self.npoolsize = np.min([npoolsize,self.poolsize])
         self.average_class_size = self.poolsize/len(self.classes_trained_on)
+        logger.info(f"The average # samples per class is {self.average_class_size:.0f}")
         #self.average_class_size = np.min(pd.value_counts(self.classes).values)
 
         # Init idxs list
@@ -176,6 +155,91 @@ class TuplesDataset_2class(data.Dataset):
         return fmt_str
 
 
+    def _extract_dataset_(self):
+        dataset = self.mode
+        # Extract database
+        if dataset != 'trainval':
+            db_root = os.path.join(self.data_root, f'{dataset}.json')
+            f = open(db_root)
+            db = json.load(f)
+            f.close()  
+            
+        else:  
+            db_root_train = os.path.join(self.data_root, 'train.json')
+            db_root_val = os.path.join(self.data_root, 'val.json')
+            
+            # Load database
+            f = open(db_root_train)
+            db = json.load(f)
+            f.close()
+            f = open(db_root_val)
+            db_val = json.load(f)
+            f.close()
+            
+            # Concat databases
+            for k in db.keys():
+                db[k].extend(db_val[k])
+        
+        #Extract objects from database
+        if dataset == 'test':
+            # Extract list of images
+            objects_list = [[db[j]['img_name']]*len(db[j]['classes']) for j in range(len(db))]
+            objects = []
+            [objects.extend(obj) for obj in objects_list]
+            
+            # Extract list of bbox
+            bbox_list = [db[j]['bbox'] for j in range(len(db))]
+            bboxs = []
+            [bboxs.extend(bbox) for bbox in bbox_list]
+            
+            # Extract list of classes
+            class_num = [db[j]['classes'] for j in range(len(db))]
+            classes = []
+            [classes.extend(class_list) for class_list in class_num]
+            
+            # Sort on classes
+            class_sort_idxs = np.argsort(classes)
+            objects = [objects[i] for i in class_sort_idxs]
+            bboxs = [bboxs[i] for i in class_sort_idxs]
+            classes = [classes[i] for i in class_sort_idxs]
+        
+        else:
+            # Extract list of classes
+            class_num = [[key]*len(db[key]) for key in db.keys()]
+            classes = []
+            [classes.extend(class_list) for class_list in class_num]
+
+            # Extract list of images
+            obj_names = [[db[key][j]['img_name'] for j in range(len(db[key]))] for key in db.keys()]
+            objects = []
+            [objects.extend(image_list) for image_list in obj_names]
+
+            # Extract list of bbox
+            bbox_list = [[db[key][j]['bbox'] for j in range(len(db[key]))] for key in db.keys()]
+            bboxs = []
+            [bboxs.extend(bbox) for bbox in bbox_list]
+            
+            
+        #Remove objects not trained on
+        classes_keep_mask = [i for i in range(len(classes)) 
+                                if classes[i] in self.classes_trained_on]
+        objects = [objects[i] for i in classes_keep_mask]
+        bboxs = [bboxs[i] for i in classes_keep_mask]
+        classes = [classes[i] for i in classes_keep_mask]
+        
+        
+        # Get index hash for each class
+        class_hash = {}
+        count = 0
+        keys, vals = np.unique(classes, return_counts=True)
+        for i, key in enumerate(keys):
+            class_hash[key] = (count,count+vals[i])
+            count += vals[i]
+            
+            
+        return objects, bboxs, classes, class_hash
+
+
 
     def update_backbone_repr_pool(self, net: ImageClassifierNet_BayesianTripletLoss):
         logger.info('\n\n §§§§ Updating pool for *{}* dataset... §§§§\n'.format(self.mode))
@@ -227,7 +291,19 @@ class TuplesDataset_2class(data.Dataset):
                     o = net.forward_backbone(input.cuda())
             
             if i == 0: #init backbone representation tensor
-                self.backbone_repr = torch.zeros(len(loader),o.shape[1],o.shape[2],o.shape[3]).cuda()
+                try:
+                    self.backbone_repr = torch.empty(len(loader),o.shape[1],o.shape[2],o.shape[3]).cuda()
+                    mem_cuda = torch.cuda.memory_allocated() / 1024 / 1024 / 1024
+                    logger.info(f"Total memory consumption after storing '{self.mode}' data "+
+                                f"backbone representations on "+
+                                f"Cuda: {mem_cuda:.3f}GB")
+                except:
+                    logger.error(f"Memory needed for storing pool of backbone "+
+                                f"representations exceeds available memory. Consider lower the"+
+                                f" the number of class samples in pool.")
+                    raise MemoryError(f"Memory needed for storing pool of backbone "+
+                                f"representations exceeds available memory. Consider lower the"+
+                                f" the number of class samples in pool.")
             self.backbone_repr[i] = o[0]
             
             if (i+1) % self.print_freq == 0 or (i+1) == len(idxs2pool_list):

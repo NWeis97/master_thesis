@@ -1,10 +1,10 @@
 #!/bin/bash
-export R=1
+export R=_Vanilla2
 ### NAME OF FILE
-#BSUB -J config_classic1
+#BSUB -J config_Vanilla2
 ### OUTPUT AND ERROR FILE
-#BSUB -o config_hpc/config_classic1.out
-#BSUB -e config_hpc/config_classic1.err
+#BSUB -o config_hpc/config_Vanilla2.out
+#BSUB -e config_hpc/config_Vanilla2.err
 ### QUEUE TO BE USED
 #BSUB -q gpuv100
 ### gpu memory
@@ -22,9 +22,9 @@ export R=1
 ### SEND NOTIFICATION UPON COMPLETION
 #BSUB -N
 
-rm config_hpc/config_classic${R}.out
-rm config_hpc/config_classic${R}.err
+rm config_hpc/config${R}.out
+rm config_hpc/config${R}.err
 source init.sh
 wandb online
 
-python3 src/training_test/train_classic_classifier_model.py --config-filename=training_classic${R}
+python3 src/training_test/train_classic_classifier_model.py --config-filename=training${R}
