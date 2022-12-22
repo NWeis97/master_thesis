@@ -148,9 +148,7 @@ class ImageClassifierNet_BayesianTripletLoss(nn.Module):
         return o
     
     def forward_head(self, o, random_state=None):
-        if random_state is None:
-            torch.manual_seed(torch.seed())
-        else:
+        if random_state is not None:
             torch.manual_seed(random_state)
             
         # divide into mean and variance head
@@ -200,9 +198,7 @@ class ImageClassifierNet_BayesianTripletLoss(nn.Module):
     
     
     def forward_head_with_swag(self,o,random_state=None):
-        if random_state is None:
-            torch.manual_seed(torch.seed())
-        else:
+        if random_state is not None:
             torch.manual_seed(random_state)
         
         count_mean = 0
@@ -379,7 +375,10 @@ class ImageClassifierNet_Classic(nn.Module):
         
         return o
     
-    def forward_head(self, o):
+    def forward_head(self, o, random_state=None):
+        if random_state is not None:
+            torch.manual_seed(random_state)
+        
         # divide into mean and variance head
         m = self.conv2d(o)
         m = self.batchnorm2d(m)
@@ -404,8 +403,10 @@ class ImageClassifierNet_Classic(nn.Module):
         
         return out
 
-    def forward_head_with_swag(self,o):
+    def forward_head_with_swag(self,o,rnd_states=None):
         for j in range(25):
+            if rnd_states is not None:
+                torch.manual_seed(rnd_states[j])
             count = 0
             for idx, (name, param) in enumerate(self.named_parameters()):
                 if name.split('.')[0] != 'features':

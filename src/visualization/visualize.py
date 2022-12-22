@@ -498,7 +498,7 @@ def calibration_plots(cali_plot_df_acc: pd.DataFrame,
         sizes = size_min + (size_max-size_min)*sizes/100
         sizes = sizes.astype(float)
         
-        if (class_=='All (WECE)') or (class_=='Class_mean (AECE)    '):
+        if (class_=='All (WECE)') or (class_=='Class_mean (AECE)'):
             color = '#008000'
         elif class_[-4:]=='_OOD':
             color = '#8C000F'
@@ -508,7 +508,7 @@ def calibration_plots(cali_plot_df_acc: pd.DataFrame,
         y = cali_plot_df_acc[class_]
         std = cali_plot_df_acc[class_]*(1-cali_plot_df_acc[class_])/num_samples_bins[class_]
         std = np.sqrt(std.fillna(100))
-        std[std==0] = 1
+        std[(std==0)&(num_samples_bins[class_]==1)] = 1
 
          # Add reference lines
         x_opt = np.arange(0,1.01,0.01)

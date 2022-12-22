@@ -28,3 +28,4 @@ source init.sh
 wandb online
 
 python3 src/training_test/train_classifier_model2.py --config-filename=training${R}
+

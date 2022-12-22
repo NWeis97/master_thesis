@@ -241,6 +241,7 @@ def main(config):
     
     # Get wandb name
     wandb_run_name = wandb.run.name
+    print(wandb_run_name)
     
     # get logger
     logger = get_logger(wandb_run_name)
@@ -592,7 +593,7 @@ def main(config):
         # Save model on W&B and remove locally
         if ((i+1)%save_model_freq == 0) | (i == num_epochs-1):
             logger.info('Saving the model')
-            torch.save(net.state_dict(),f'./models/tmp_models/{wandb_run_name}.pt')
+            torch.save(net.state_dict(),f'./models/state_dicts/{wandb_run_name}.pt')
             wandb.save(f'./models/tmp_models/{wandb_run_name}.pt', policy="now")
             
             

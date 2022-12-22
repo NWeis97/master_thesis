@@ -69,7 +69,7 @@ def main(args):
     #* ------ Remove classes not trained on ------
     #* -------------------------------------------
     OOD_true_classes_idx = ([i for i in range(len(true_classes)) 
-                                if true_classes[i] in classifier.classes_not_trained_on])
+                                 if '_OOD' in true_classes[i]])
     OOD_probs_df = probs_df.iloc[:,OOD_true_classes_idx]
     #OOD_objects = [objects[i] for i in range(len(true_classes)) if i in OOD_true_classes_idx]
     #OOD_bboxs = [bboxs[i] for i in range(len(true_classes)) if i in OOD_true_classes_idx]

@@ -50,6 +50,8 @@ class ImageClassifier():
         # Load model
         self.model_type = model_type
         self.params = params
+        print(f'** Setting random seed to model training seed: {params["seed"]} **')
+        torch.manual_seed(self.params['seed'])
         self.model = init_network(self.model_type, self.params)
         if self.model_type == 'BayesianTripletLoss':
             self.model.load_state_dict(torch.load(f'models/state_dicts/{self.model_name}.pt'))
@@ -66,12 +68,12 @@ class ImageClassifier():
         self.num_classes = len(self.classes_trained_on)
         
         # Create db for classes trained on (with OOD if wanted)
-        #if self.with_OOD == True:
-        #    if self.model_type != 'BayesianTripletLoss':
-        #        Warning("Model is not compatible with OOD classes - OOD not included")
-        #        db = {key:db[key] for key in self.classes_trained_on}
-        #else:
-        #    db = {key:db[key] for key in self.classes_trained_on}
+        if self.with_OOD == True:
+            if self.model_type != 'BayesianTripletLoss':
+                Warning("Model is not compatible with OOD classes - OOD not included")
+                db = {key:db[key] for key in self.classes_trained_on}
+        else:
+            db = {key:db[key] for key in self.classes_trained_on}
                 
         # Extract list of images
         obj_names = [[db[key][j]['img_name'] for j in range(len(db[key]))] for key in db.keys()]
@@ -208,17 +210,18 @@ class ImageClassifier():
             classes = []
             [classes.extend(class_list) for class_list in class_num]
             
-        # Mark objects not trained on if with_OOD is true else remove them
-        if self.with_OOD == True:
-            for i in range(len(classes)):
-                if classes[i] in self.classes_not_trained_on:
-                    classes[i] = classes[i] + '_OOD'
-        else:
-            idx_trained_on = [i for i in range(len(classes)) if classes[i] 
-                                                            not in self.classes_not_trained_on]
-            objects = [objects[i] for i in idx_trained_on]
-            bboxs = [bboxs[i] for i in idx_trained_on]
-            classes = [classes[i] for i in idx_trained_on]
+        # Mark objects not trained on with _OOD 
+        for i in range(len(classes)):
+            if classes[i] in self.classes_not_trained_on:
+                classes[i] = classes[i] + '_OOD'
+        #if self.with_OOD == True:
+            
+        #else:
+        #    idx_trained_on = [i for i in range(len(classes)) if classes[i] 
+        #                                                    not in self.classes_not_trained_on]
+        #    objects = [objects[i] for i in idx_trained_on]
+        #    bboxs = [bboxs[i] for i in idx_trained_on]
+        #    classes = [classes[i] for i in idx_trained_on]
             
         return objects, bboxs, classes
     
@@ -248,7 +251,7 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
                  model_data: str,
                  with_OOD: bool = False,
                  balanced_classes: int = 0,
-                 calibration_method: str = 'none'):
+                 calibration_method: str = 'None'):
         """Image classifier model. Has embeddings of training data and can classify and calculate
            probability disitrbution for unknown object over objects trained on.
 
@@ -358,6 +361,9 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
                 
             mean_embs = torch.zeros(mean_dim, len(classes)).cuda()
             var_embs = torch.zeros(var_dim,len(classes)).cuda()
+            
+            torch.manual_seed(self.params['seed'])
+            self.rnd_states = torch.randperm(100000000)[:100]
             for i in range(len(classes)):
                 probs, mean_emb, var_emb = self._get_probability_dist_(objects[i],
                                                                        bboxs[i],
@@ -450,7 +456,7 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
         # Get embeddings
         mean_emb, var_emb, backbone_emb = self._get_embedding_(img_name,bbox)
         
-        if self.calibration_method == 'none':
+        if self.calibration_method == 'None':
             
             dist = (torch.pow(self.means-mean_emb[None,:].T+1e-6, 2).sum(dim=0).sqrt())
             _, ranks = torch.sort(dist, dim=0, descending=False)
@@ -462,23 +468,26 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
             else:
                 raise ValueError('Method does not exist')
         
+        
         elif (self.calibration_method == 'SWAG') | (self.calibration_method == 'MCDropout'):
+            
             num_samples = 20
             
             if self.calibration_method == 'MCDropout':
                 self.model.eval_with_dropout()
             
             probs_swag = {key:0 for key in np.unique(self.classes)}
+
             for j in range(num_samples):
                 with torch.no_grad():
                     if self.calibration_method == 'SWAG':
                         if (self.out_rand_init is False):
-                            out = self.model.forward_head_with_swag(self.backbone_repr,j)
-                        out_emb = self.model.forward_head_with_swag(backbone_emb,j)
+                            out = self.model.forward_head_with_swag(self.backbone_repr,self.rnd_states[j])
+                        out_emb = self.model.forward_head_with_swag(backbone_emb,self.rnd_states[j])
                     else:
                         if (self.out_rand_init is False):
-                            out = self.model.forward_head(self.backbone_repr,j)
-                        out_emb = self.model.forward_head(backbone_emb,j)
+                            out = self.model.forward_head(self.backbone_repr,self.rnd_states[j])
+                        out_emb = self.model.forward_head(backbone_emb,self.rnd_states[j])
                     
                     # Store random init
                     if self.out_rand is None: #Init random embedding database
@@ -496,15 +505,16 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
                     
                     dist = (torch.pow(self.means-mean_emb[None,:].T+1e-6, 2).sum(dim=0).sqrt())
                     _, ranks = torch.sort(dist, dim=0, descending=False)
-                
+            
                 if method == 'min_dist_NN':    
                     probs = self._min_dist_NN_(ranks, mean_emb, var_emb, num_NN, num_MC, 
                                                means_NN[:,ranks[:num_NN]], 
                                                vars_NN[:,ranks[:num_NN]])
                 elif method == 'kNN_gauss_kernel':
-                    probs = self._kNN_gauss_kernel_(ranks, mean_emb, var_emb, num_NN, 'all', 
-                                                    means_NN[:,ranks[:num_NN]], 
-                                                    vars_NN[:,ranks[:num_NN]])
+                    probs = self._kNN_gauss_kernel_(ranks, mean_emb, var_emb, num_NN, dist_classes, 
+                                                means_NN, 
+                                                vars_NN)
+                    
                 else:
                     raise ValueError('Method does not exist')
                 
@@ -514,6 +524,14 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
             probs = probs_swag
         else:
             raise ValueError(f"{self.calibration_method} calibration method is not implemented for this model type")
+        
+        # reset seed to original
+        torch.manual_seed(self.params['seed'])
+        
+        # reset evaluation method to original
+        if self.calibration_method == 'MCDropout':
+            self.model.eval()
+            
         return probs, mean_emb, var_emb
     
     def _extract_means_and_variances_(self): 
@@ -815,7 +833,7 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
         
         return probs 
        
-    def _kNN_gauss_kernel_(self, ranks, mean_emb, var_emb, num_NN, dist_classes = 'unif', means_NN=None, vars_NN=None):
+    def _kNN_gauss_kernel_(self, ranks, mean_emb, var_emb, num_NN, dist_classes = 'all', means_NN=None, vars_NN=None):
         if means_NN is None:
             # Extract database images of interest
             if dist_classes=='unif':
@@ -843,8 +861,19 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
             means_NN = self.means[:,ranks_new].cuda()
             vars_NN = self.vars[:,ranks_new].cuda()
             classes_NN = [self.classes[i] for i in ranks_new]
+        
         else:
-            classes_NN = [self.classes[i] for i in ranks]
+            ranks_new = ranks.cpu().numpy()
+            ranks_new = ranks_new.astype(int)
+            
+            if dist_classes=='all':
+                classes_NN = [self.classes[i] for i in ranks_new]
+            elif dist_classes=='nn':
+                classes_NN = [self.classes[i] for i in ranks_new[:num_NN]]
+                means_NN = means_NN[:,ranks_new[:num_NN]]
+                vars_NN = vars_NN[:,ranks_new[:num_NN]]
+            else:
+                raise ValueError("Method not valid for calibrated run")
         
         # Extract the expected distance dimension wise (since isotropic gaussians) and sum up 
         means_per_dim_sub = torch.pow(torch.sub(means_NN.T,mean_emb),2)
@@ -978,6 +1007,9 @@ class ImageClassifier_Classic(ImageClassifier):
                                     columns = [i for i in range(len(classes))],
                                     index = self.unique_classes)
 
+            # Make fixed random states
+            torch.manual_seed(self.params['seed'])
+            self.rnd_states = torch.randperm(100000000)[:100]
             for i in range(len(classes)):
                 # Get and save probs
                 obj = objects[i]
@@ -1025,9 +1057,11 @@ class ImageClassifier_Classic(ImageClassifier):
                 # Get model output
                 backbone_repr = self.model.forward_backbone(img.cuda())
                 self.model.eval_with_dropout()
-                probs = torch.softmax(self.model.forward_head(backbone_repr).squeeze(),-1).cpu().numpy()
+                probs = torch.softmax(self.model.forward_head(backbone_repr,self.rnd_states[0])
+                                      .squeeze(),-1).cpu().numpy()
                 for i in range(24):
-                    probs += torch.softmax(self.model.forward_head(backbone_repr).squeeze(),-1).cpu().numpy()
+                    probs += torch.softmax(self.model.forward_head(backbone_repr,self.rnd_states[i])
+                                           .squeeze(),-1).cpu().numpy()
                     
                 probs = probs/25
                 self.model.eval()
@@ -1051,7 +1085,7 @@ class ImageClassifier_Classic(ImageClassifier):
                 
                 # Get model output
                 o = self.model.forward_backbone(img.cuda())
-                logits = self.model.forward_head_with_swag(o).squeeze()
+                logits = self.model.forward_head_with_swag(o,self.rnd_states).squeeze()
                 probs = torch.softmax(logits,-1).cpu().numpy()
         else: 
             raise ValueError("Unknown calibration method")

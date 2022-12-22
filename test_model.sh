@@ -1,22 +1,22 @@
 #!/bin/bash
 ### Settings for test run
 export R=1
-export model_name=hearty-water-1729
+export model_name=unique-durian-1790
 export model_database=TRAINVAL
-export balanced_dataset=-1350
+export balanced_dataset=20
 export test_dataset=test
-export num_NN=650
-export num_MC=3000
+export num_NN=20
+export num_MC=300
 export method=min_dist_NN
 export with_OOD=False
 export dist_classes=all
-export calibration_method=none
+export calibration_method=None
 
 #kNN_gauss_kernel
 #min_dist_NN
 
 #SWAG
-#none
+#None
 #MCDropout
 
 ### NAME OF FILE

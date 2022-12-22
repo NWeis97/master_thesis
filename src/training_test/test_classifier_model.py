@@ -7,6 +7,7 @@ import pandas as pd
 import torch
 import ast
 import pickle
+import os
 
 # Own imoprts
 from src.models.image_classifier import ImageClassifier, init_classifier_model
@@ -85,17 +86,16 @@ def main(args):
     #* -------------------------------------------
     #* ------ Remove classes not trained on ------
     #* -------------------------------------------
-    if with_OOD == False:
-        classifier.classes_not_trained_on = ['dog']
-        OOD_true_classes_idx = ([i for i in range(len(true_classes)) 
-                                 if true_classes[i] in classifier.classes_not_trained_on])
-        OOD_probs_df = probs_df.iloc[:,OOD_true_classes_idx]
-        #OOD_objects = [objects[i] for i in range(len(true_classes)) if i in OOD_true_classes_idx]
-        #OOD_bboxs = [bboxs[i] for i in range(len(true_classes)) if i in OOD_true_classes_idx]
-        #OOD_true_classes = ([true_classes[i] for i in range(len(true_classes)) 
-        #                    if i in OOD_true_classes_idx])
-        OOD_probs_df.columns = np.arange(0,len(OOD_probs_df.columns),1)
-        
+    OOD_true_classes_idx = ([i for i in range(len(true_classes)) 
+                                 if '_OOD' in true_classes[i]])
+    OOD_probs_df = probs_df.iloc[:,OOD_true_classes_idx]
+    #OOD_objects = [objects[i] for i in range(len(true_classes)) if i in OOD_true_classes_idx]
+    #OOD_bboxs = [bboxs[i] for i in range(len(true_classes)) if i in OOD_true_classes_idx]
+    OOD_true_classes = ([true_classes[i] for i in range(len(true_classes)) 
+                        if i in OOD_true_classes_idx])
+    OOD_probs_df.columns = np.arange(0,len(OOD_probs_df.columns),1)
+    
+    if with_OOD == False:    
         ID_true_classes_idx = [i for i in range(len(true_classes)) if i not in OOD_true_classes_idx]
         probs_df = probs_df.iloc[:,ID_true_classes_idx]
         objects = [objects[i] for i in range(len(true_classes)) if i in ID_true_classes_idx]
@@ -103,14 +103,6 @@ def main(args):
         true_classes = ([true_classes[i] for i in range(len(true_classes)) 
                             if i in ID_true_classes_idx])
         probs_df.columns = np.arange(0,len(probs_df.columns),1)
-    
-    # Get entropies of OOD objects
-    if with_OOD == False:
-        entropies_OOD = get_entropies(OOD_probs_df)
-        entropies_ID = get_entropies(probs_df)
-    else:
-        entropies_ID = get_entropies(probs_df)
-        entropies_OOD = []
     
     #* --------------------------------------
     #* ------ Get Performance Measures ------
@@ -136,6 +128,13 @@ def main(args):
      AvU_best_thresh, best_thresh, AvU_best_df,
      AUC_AvU, ACr_list, ICr_list) = get_AvU(probs_df, true_classes,len(classifier.unique_classes))
     
+    if with_OOD:
+        # Get UCE (OOD)
+        (UCE_OOD, _, 
+        UCE_df_OOD,_) = get_UCE(OOD_probs_df, OOD_true_classes,len(classifier.unique_classes))
+    else:
+        UCE_OOD = None
+        UCE_df_OOD = None
     
     
     #* ---------------------------
@@ -179,6 +178,9 @@ def main(args):
     
     # Make illustrations of embedding space with classes
     means, vars = classifier.get_embeddings_of_test_dataset(test_dataset)
+    if with_OOD == False:
+        means = means[:,ID_true_classes_idx]
+        vars = vars[:,ID_true_classes_idx]
     fig_tsne_test, fig_pca_test = visualize_embedding_space(classifier, means, vars, true_classes)
     fig_tsne_images, fig_pca_images = visualize_embedding_space_with_images(classifier, means, vars,
                                                                             true_classes,
@@ -291,7 +293,7 @@ def main(args):
     #* ---------------------------------------
     #* ------ Log Results to local file ------
     #* ---------------------------------------
-    metrics_dict = {'Model Type': classifier.model_type,
+    metrics_dict = {'Model Type': classifier.model_type+'_'+classifier.params['var_type'],
                     'Method': method,
                     'Calibration Method': calibration_method,
                     'With_OOD': with_OOD,
@@ -306,13 +308,14 @@ def main(args):
                     'CECE': CECE,
                     'ACE': ACE,
                     'UCE': UCE,
+                    'UCE_OOD': UCE_OOD,
                     'AvU_simple_thresh': AvU_simple_thresh,
                     'AvU_best_thresh': AvU_best_thresh,
                     'Uncertainty_simple_thresh': simple_thresh,
                     'Uncertainty_best_thresh': best_thresh,
                     'AUC_AvU': AUC_AvU}
     
-    graphs_dict = {'Model Type': classifier.model_type,
+    graphs_dict = {'Model Type': classifier.model_type+'_'+classifier.params['var_type'],
                    'Method': method,
                    'Calibration Method': calibration_method,
                    'With_OOD': with_OOD,
@@ -330,6 +333,7 @@ def main(args):
                    'Class Calibration Conf (ACE)': ACE_conf_df,
                    'Class Calibration count (ACE)': ACE_num_each_bin,
                    'Uncertainty Calibration': UCE_df,
+                   'Uncertainty Calibration (OOD)': UCE_df_OOD,
                    'AvU_simple_df': AvU_simple_df,
                    'AvU_best_df': AvU_best_df,
                    'Entropies_ID': entropies_ID,

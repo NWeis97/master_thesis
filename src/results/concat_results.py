@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import pickle
 import matplotlib.pyplot as plt
-import seaborn
+import seaborn as sns
 from os import listdir
 from os.path import isfile, join
 import pdb
@@ -16,49 +16,49 @@ from scipy.interpolate import interp1d
 def main():
     # Define dataframe for storing data
     
-    metrics_data = pd.DataFrame(columns=['Model Type', 'Method', 'Calibration Method', 'Seed', 
+    metrics_data = pd.DataFrame(columns=['Model Type', 'Method', 'Calibration Method', 'With_OOD','Seed', 
                                          'MaP', 'Accuracy top1', 'Accuracy top2', 'Accuracy top3', 
                                          'Accuracy top5', 'AECE', 'WECE', 'CECE', 'ACE', 'UCE', 
                                          'AvU_simple_thresh', 'AvU_best_thresh', 
                                          'Uncertainty_simple_thresh', 'Uncertainty_best_thresh', 
                                          'AUC_AvU'])
     
-    class_data = pd.DataFrame(columns=['Model Type', 'Method', 'Calibration Method', 'Seed',
+    class_data = pd.DataFrame(columns=['Model Type', 'Method', 'Calibration Method', 'With_OOD','Seed', 
                                              'index','Average precision',
                                              'Class Expected Calibration Error','acc_top1',
                                              'acc_top2','acc_top3','acc_top5'])
     
-    acc_inacc_certain = pd.DataFrame(columns=['Model Type', 'Method', 'Calibration Method', 'Seed',
+    acc_inacc_certain = pd.DataFrame(columns=['Model Type', 'Method', 'Calibration Method', 'With_OOD','Seed', 
                                               'Accurat_certain_ratio', 'Inaccurat_certain_ratio'])
     
-    calibration_vs_acc = pd.DataFrame(columns=['Model Type', 'Method', 'Calibration Method', 'Seed',
+    calibration_vs_acc = pd.DataFrame(columns=['Model Type', 'Method', 'Calibration Method', 'With_OOD','Seed', 
                                              'Confidence','Accuracy'])
     
-    accurate_when_certain = pd.DataFrame(columns=['Model Type', 'Method', 'Calibration Method', 'Seed',
+    accurate_when_certain = pd.DataFrame(columns=['Model Type', 'Method', 'Calibration Method', 'With_OOD','Seed', 
                                                   'Uncertainty_thresh','Accuracy'])
     
-    uncertain_when_inacc = pd.DataFrame(columns=['Model Type', 'Method', 'Calibration Method', 'Seed',
+    uncertain_when_inacc = pd.DataFrame(columns=['Model Type', 'Method', 'Calibration Method', 'With_OOD','Seed', 
                                              'Uncertainty_thresh','Recall_inacc'])
     
-    class_cali_acc = pd.DataFrame(columns=['Model Type', 'Method', 'Calibration Method', 'Seed',
+    class_cali_acc = pd.DataFrame(columns=['Model Type', 'Method', 'Calibration Method', 'With_OOD','Seed', 
                                             'aeroplane', 'person', 'tvmonitor', 'train', 'boat', 'dog', 'chair',
                                             'bird', 'bicycle', 'bottle', 'sheep', 'diningtable', 'motorbike',
                                             'sofa', 'cow', 'cat', 'bus', 'pottedplant', 'All (WECE)',
                                              'Class_mean (AECE)'])
     
-    class_cali_conf = pd.DataFrame(columns=['Model Type', 'Method', 'Calibration Method', 'Seed',
+    class_cali_conf = pd.DataFrame(columns=['Model Type', 'Method', 'Calibration Method', 'With_OOD','Seed', 
                                             'aeroplane', 'person', 'tvmonitor', 'train', 'boat', 'dog', 'chair',
                                             'bird', 'bicycle', 'bottle', 'sheep', 'diningtable', 'motorbike',
                                             'sofa', 'cow', 'cat', 'bus', 'pottedplant', 'All (WECE)',
                                              'Class_mean (AECE)'])
     
-    class_cali_count = pd.DataFrame(columns=['Model Type', 'Method', 'Calibration Method', 'Seed',
+    class_cali_count = pd.DataFrame(columns=['Model Type', 'Method', 'Calibration Method', 'With_OOD','Seed', 
                                             'aeroplane', 'person', 'tvmonitor', 'train', 'boat', 'dog', 'chair',
                                             'bird', 'bicycle', 'bottle', 'sheep', 'diningtable', 'motorbike',
                                             'sofa', 'cow', 'cat', 'bus', 'pottedplant', 'All (WECE)',
                                              'Class_mean (AECE)'])
     
-    uncert_cali = pd.DataFrame(columns=['Model Type', 'Method', 'Calibration Method', 'Seed',
+    uncert_cali = pd.DataFrame(columns=['Model Type', 'Method', 'Calibration Method', 'With_OOD','Seed', 
                                         'Uncertainty','True error', 'Optimal', 'Count'])
     
     
@@ -161,9 +161,42 @@ def main():
                 uncert_cali = pd.concat([uncert_cali,b['Uncertainty Calibration']],axis=0)
                 
 
-    pdb.set_trace()
 
 
+    # Plot map
+    metrics = (['MaP', 'Accuracy top1', 'Accuracy top2', 'Accuracy top3', 'Accuracy top5',
+                   'AECE', 'WECE', 'CECE', 'ACE', 'UCE', 'AUC_AvU'])
+    for metric in metrics:
+        
+        fig, ax = plt.subplots(1,2, sharey=True,figsize=(12,5))
+        for i,model_type in enumerate(metrics_data['Model Type'].unique()):  
+            df_type = metrics_data[metrics_data['Model Type']==model_type] 
+            if model_type == 'Classic':
+                hue_order=['None','MCDropout','SWAG','TempScaling']
+            else:
+                hue_order=['none','MCDropout','SWAG']
+            
+            sns.boxplot(x='Method',y=metric,hue='Calibration Method',data=df_type, ax=ax.flatten()[i],
+                        hue_order=hue_order, )
+            
+            if i != 0:
+                ax.flatten()[i].set_ylabel(None)
+            else:
+                ax.flatten()[i].set_ylabel(metric,fontsize = 14)
+                
+            plt.subplots_adjust(left=0.1, right=0.82, top=0.9, bottom=0.1,wspace=0.1)
+                
+            if i != len(metrics_data['Model Type'].unique())-1:
+                ax.flatten()[i].get_legend().remove()
+            else:
+                ax.flatten()[i].legend(bbox_to_anchor=(1.38, 1), borderaxespad=0)
+            
+            ax.flatten()[i].set_title(model_type,fontsize = 17)
+            ax.flatten()[i].set_xlabel('Method',fontsize = 14)
+            ax.flatten()[i].set_xticks(ax.flatten()[i].get_xticks(),fontsize=13, rotation=0)
+            #ax.flatten()[i].set_yticks(plt.get_yticks(),fontsize=13, rotation=0)
+            
+        fig.savefig(f'reports/test/{metric}.png')
 
 
 if __name__ == '__main__':
