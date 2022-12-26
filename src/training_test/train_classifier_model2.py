@@ -242,6 +242,7 @@ def main(config):
     # Get wandb name
     wandb_run_name = wandb.run.name
     print(wandb_run_name)
+    print(wandb.run.dir[:-5])
     
     # get logger
     logger = get_logger(wandb_run_name)
@@ -607,45 +608,82 @@ def main(config):
         else:
             update_pool_count += 1
             
+          
+        # ********************************************
+        # ******** Save SWAG Init weights ************
+        # ********************************************
+        if params['with_swag'] == True:
+            if i+1 == int(np.ceil(num_epochs*1/2)):
+                
+                base_params = net.features.parameters()
+                head_params = [i for i in net.parameters() if i not in base_params]
+                swag_init_mean_param = []
+                swag_init_var_param = []
+                for idx, (name, param) in enumerate(net.named_parameters()):
+                    if name.split('.')[0] != 'features':
+                        if name.split('_')[0] == 'mean':
+                            swag_init_mean_param.append(param.data.clone())
+                        else:
+                            swag_init_var_param.append(param.data.clone())
+
+                lr_end_swag = lr_optim
+            
             
 
     # *******************************
     # ******** With SWAG ************
     # *******************************
+    if params['with_swag'] == True:
+        head_params_swag_mean = []
+        head_params_swag_var = []
+        head_params_mean__mean = [] # Mean of mean head
+        head_params_mean__var = [] # Mean of var head
+        head_params_var__mean = [] # Var of mean head
+        head_params_var__var = [] # Var of var head
+        logger.info(f'>> Extracting param values for SWAG')
+        
+        #Reset lr
+        lr_init_swag = (lr_init+lr_end_swag)/2
+        lr_frac_swag = (lr_end_swag/lr_init_swag)**(1/(num_train_per_update*2-1))
+        
+        #Reset weights to swag init
+        count_mean = 0
+        count_var = 0
+        for idx, (name, param) in enumerate(net.named_parameters()):
+            if name.split('.')[0] != 'features':
+                if name.split('_')[0] == 'mean':
+                    param.data = swag_init_mean_param[count_mean]
+                    count_mean += 1
+                else:
+                    param.data = swag_init_var_param[count_var]
+                    count_var += 1
     
-    head_params_swag_mean = []
-    head_params_swag_var = []
-    head_params_mean__mean = [] # Mean of mean head
-    head_params_mean__var = [] # Mean of var head
-    head_params_var__mean = [] # Var of mean head
-    head_params_var__var = [] # Var of var head
-    logger.info(f'>> Extracting param values for SWAG')
-    
-    #Reset lr
-    lr_optim = (lr_init*lr_end)**(1/2)
-    
-    if True:
+        # Extract SWAG weights
         for j in range(20):
-            base_params = net.features.parameters()
-            head_params = [i for i in net.parameters() if i not in base_params]
-            tmp_mean_param = []
-            tmp_var_param = []
-            for idx, (name, param) in enumerate(net.named_parameters()):
-                if name.split('.')[0] != 'features':
-                    if name.split('_')[0] == 'mean':
-                        tmp_mean_param.append(param.data.clone())
-                    else:
-                        tmp_var_param.append(param.data.clone())
-            head_params_swag_mean.append(tmp_mean_param)
-            head_params_swag_var.append(tmp_var_param)
-            
-            optim = AdamW([
-                            {'params': head_params},
-                            {'params': base_params, 'lr': lr_optim*0.01}, 
-                        ],lr=lr_optim, weight_decay=1e-1)
+            # Only save model weights every two epochs
+            if ((j+1) % 2 == 0) | (j == 0):
+                base_params = net.features.parameters()
+                head_params = [i for i in net.parameters() if i not in base_params]
+                tmp_mean_param = []
+                tmp_var_param = []
+                for idx, (name, param) in enumerate(net.named_parameters()):
+                    if name.split('.')[0] != 'features':
+                        if name.split('_')[0] == 'mean':
+                            tmp_mean_param.append(param.data.clone())
+                        else:
+                            tmp_var_param.append(param.data.clone())
+                head_params_swag_mean.append(tmp_mean_param)
+                head_params_swag_var.append(tmp_var_param)
         
             # train model
             for k in range(num_train_per_update):
+                lr_optim = lr_init_swag*(lr_frac_swag**(k+k*j%2))
+                
+                optim = AdamW([
+                            {'params': head_params},
+                            {'params': base_params, 'lr': lr_optim*0.01}, 
+                        ],lr=lr_optim, weight_decay=1e-1,)
+                
                 
                 # Make new tuples
                 (avg_neg_distance_train,
@@ -658,8 +696,11 @@ def main(config):
             
             
             logger.info(f'>>>>> {j+1}/{20}')
-            if (j != 20):
+            if (j+1 != 20):
                 train_loader.dataset.update_backbone_repr_pool(net)
+                
+                
+                
                 
         # Get mean of params (mean head)
         for j in range(len(head_params_swag_mean[0])):
@@ -693,19 +734,12 @@ def main(config):
             
             head_params_var__var.append((var_params__var / len(head_params_swag_var))**(1/2))
         
+        # Save results
         net.head_mean__mean = head_params_mean__mean
         net.head_mean__var = head_params_mean__var
         net.head_std__mean = head_params_var__mean
         net.head_std__var = head_params_var__var
         
-        logger.info('Saving SWAG headers')
-        torch.save(net.head_mean__mean,f'./models/swag_headers/{wandb_run_name}_mean_swag__mean.pt')
-        torch.save(net.head_mean__var,f'./models/swag_headers/{wandb_run_name}_mean_swag__var.pt')
-        torch.save(net.head_std__mean,f'./models/swag_headers/{wandb_run_name}_std_swag__mean.pt')
-        torch.save(net.head_std__var,f'./models/swag_headers/{wandb_run_name}_std_swag__var.pt')
-        
-        validate(val_loader,net,criterion,i,print_freq,True)
-
         logger.info('Saving SWAG headers')
         torch.save(net.head_mean__mean,f'./models/swag_headers/{wandb_run_name}_mean_swag__mean.pt')
         torch.save(net.head_mean__var,f'./models/swag_headers/{wandb_run_name}_mean_swag__var.pt')
@@ -722,7 +756,6 @@ def main(config):
     wandb_local_dir = wandb.run.dir[:-5]
     wandb.finish()
     os.remove(f'./logs/training_test/train_model/{wandb_run_name}.log')
-    #os.remove(f'./models/tmp_models/{wandb_run_name}.pt')
     shutil.rmtree(wandb_local_dir, ignore_errors=True)
     
     

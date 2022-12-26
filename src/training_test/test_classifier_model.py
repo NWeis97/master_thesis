@@ -425,6 +425,10 @@ def main(args):
                    'Inaccurat_certain_ratio': ICr_list[i]})
 
 
+    # Remove local files
+    wandb_local_dir = wandb.run.dir[:-5]
+    wandb.finish()
+    shutil.rmtree(wandb_local_dir, ignore_errors=True)
 
 
 

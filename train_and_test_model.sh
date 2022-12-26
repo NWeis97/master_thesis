@@ -31,14 +31,15 @@ wandb online
 out=( $(python3 src/training_test/train_classifier_model2.py --config-filename=training${R}) )
 model_name=${out[0]}
 
+
 # Test model
 export model_database=TRAINVAL
 export balanced_dataset=-1350
 export test_dataset=test
 export num_NN=675
-export num_NN_kNN=675
+export num_NN_kNN=6750
 export num_MC=3000
-export dist_classes=all
+export dist_classes=nn
 
 
 # min_dist_NN (OOD False)

@@ -364,6 +364,16 @@ def main(config):
             update_pool_count = 0
         else:
             update_pool_count += 1
+            
+            
+        # ********************************************
+        # ******** Save SWAG Init weights ************
+        # ********************************************
+        if params['with_swag'] == True:
+            if i+1 == int(num_epochs*1/4):
+                base_params = net.features.parameters()
+                head_params = [i for i in net.parameters() if i not in base_params]
+                swag_init_head = [i.data.clone() for i in head_params]
 
 
 
@@ -388,16 +398,25 @@ def main(config):
     # *******************************
     # ******** With SWAG ************
     # *******************************
-    head_params_swag = []
-    head_params_mean = []
-    head_params_var = []
-    logger.info(f'>> Extracting param values for SWAG')
-    
-    #Reset lr
-    lr_optim = (lr_init*lr_end)**(1/2)
-    
     if params['with_swag'] == True:
-        for j in range(20):
+        head_params_swag = []
+        head_params_mean = []
+        head_params_var = []
+        logger.info(f'>> Extracting param values for SWAG')
+        
+        #Reset lr
+        lr_init_swag = (lr_init+lr_end)/2
+        lr_frac_swag = (lr_end/lr_init_swag)**(1/(4-1))
+        
+        #Reset weights to swag init
+        count = 0
+        for idx, (name, param) in enumerate(net.named_parameters()):
+            if name.split('.')[0] != 'features':
+                param.data = swag_init_head[count]
+                count += 1
+            
+        # Extract SWAG weights
+        for j in range(10):
             base_params = net.features.parameters()
             head_params = [i for i in net.parameters() if i not in base_params]
             head_params_ex = [i.data.clone() for i in head_params]
@@ -409,13 +428,18 @@ def main(config):
                         ],lr=lr_optim, weight_decay=1e-1)
         
             # train model
-            train_loss, train_acc = train(train_loader,net,criterion,optim,
-                                                            j, update_every, print_freq, 
-                                                            clip)
+            for k in range(4):
+                lr_optim = lr_init_swag*(lr_frac_swag**k)
+                train_loss, train_acc = train(train_loader,net,criterion,optim,
+                                                                j, update_every, print_freq, 
+                                                                clip)
             
-            logger.info(f'>>>>> {j+1}/{20}')
-            if (j != 20):
-                train_loader.dataset.update_backbone_repr_pool(net)
+                if (j+1 != 10):
+                    train_loader.dataset.update_backbone_repr_pool(net)
+                    
+                logger.info(f"Within update {k+1}/4")
+                    
+            logger.info(f'>>>>> {j+1}/{10}')
  
         
         # Get mean of params
@@ -437,11 +461,11 @@ def main(config):
         net.head_mean = head_params_mean
         net.head_std = head_params_var
         
-        val_loss, val_acc = validate(val_loader,net,criterion,i,print_freq,None,True)
-        
         logger.info('Saving SWAG headers')
         torch.save(net.head_mean,f'./models/swag_headers/{wandb_run_name}_mean_swag.pt')
         torch.save(net.head_std,f'./models/swag_headers/{wandb_run_name}_var_swag.pt')
+        
+        
         
     # ********************************
     # ******** Finish up run *********

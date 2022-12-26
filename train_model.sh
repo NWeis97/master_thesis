@@ -1,10 +1,10 @@
 #!/bin/bash
-export R=_BTM_iso2
+export R=_BTM_diag_test
 ### NAME OF FILE
-#BSUB -J config_BTM_iso2
+#BSUB -J config_BTM_diag_test
 ### OUTPUT AND ERROR FILE
-#BSUB -o config_hpc/config_BTM_iso2.out
-#BSUB -e config_hpc/config_BTM_iso2.err
+#BSUB -o config_hpc/config_BTM_diag_test.out
+#BSUB -e config_hpc/config_BTM_diag_test.err
 ### QUEUE TO BE USED
 #BSUB -q gpuv100
 ### gpu memory

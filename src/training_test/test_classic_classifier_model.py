@@ -71,6 +71,7 @@ def main(args):
     OOD_true_classes_idx = ([i for i in range(len(true_classes)) 
                                  if '_OOD' in true_classes[i]])
     OOD_probs_df = probs_df.iloc[:,OOD_true_classes_idx]
+    OOD_probs_df.columns = np.arange(0,len(OOD_probs_df.columns),1)
     #OOD_objects = [objects[i] for i in range(len(true_classes)) if i in OOD_true_classes_idx]
     #OOD_bboxs = [bboxs[i] for i in range(len(true_classes)) if i in OOD_true_classes_idx]
     #OOD_true_classes = ([true_classes[i] for i in range(len(true_classes)) 
@@ -82,6 +83,7 @@ def main(args):
     bboxs = [bboxs[i] for i in range(len(true_classes)) if i in ID_true_classes_idx]
     true_classes = ([true_classes[i] for i in range(len(true_classes)) 
                         if i in ID_true_classes_idx])
+    probs_df.columns = np.arange(0,len(probs_df.columns),1)
         
         
     
@@ -351,6 +353,11 @@ def main(args):
         wandb.log({'Accurat_certain_ratio': ACr_list[i],
                    'Inaccurat_certain_ratio': ICr_list[i]})
 
+
+    # Remove local files
+    wandb_local_dir = wandb.run.dir[:-5]
+    wandb.finish()
+    shutil.rmtree(wandb_local_dir, ignore_errors=True)
 
 
 

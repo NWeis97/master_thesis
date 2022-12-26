@@ -884,10 +884,10 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
         # Calculate all Gaussian Kernels
         D = self.means.shape[0]
         if self.means.shape[0] > self.vars.shape[0]:
-            tr_var = torch.sqrt(var_emb*D)
+            tr_var = var_emb
         else:
-            tr_var = torch.sqrt(torch.sum(var_emb))
-        f_Bayes = torch.exp(-expected_dist/(2/D*tr_var))
+            tr_var = torch.mean(var_emb)
+        f_Bayes = torch.exp(-expected_dist/(2*tr_var))    
         
         # Accumulate on class level per sample
         classes, idx = np.unique(classes_NN, return_inverse=True)
@@ -903,9 +903,22 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
     
         probs = {key:0 for key in self.unique_classes}
         for i, class_ in enumerate(classes):
-            probs[class_]=probs_Bayes[i].item()
+            if np.isnan(probs_Bayes[i].item())==False:
+                probs[class_]=probs_Bayes[i].item()
+            else:
+                probs[class_]=1/self.num_classes
             
         return probs
+    
+    
+    def calc_exp_to_x_stable(self, x):
+        
+        sum_ = 0
+        for i in range(200):
+            sum_ += x**i/np.math.factorial(i)
+            pdb.set_trace()
+            
+        
     # --------------------------------------------------------------------------------------------
     # ----------------------------------- Unused functions ---------------------------------------
     # -------------------------------------------------------------------------------------------- 
