@@ -14,7 +14,7 @@ import warnings
 from pandas.core.common import SettingWithCopyWarning
 warnings.simplefilter(action="ignore", category=SettingWithCopyWarning)
 
-
+sns.set()
 
 
 
@@ -65,6 +65,8 @@ def main():
     
     uncert_cali = pd.DataFrame(columns=['Model Type', 'Method', 'Calibration Method', 'With_OOD','Seed', 
                                         'Uncertainty','True error', 'Optimal', 'Count'])
+    uncert_cali_ood = pd.DataFrame(columns=['Model Type', 'Method', 'Calibration Method', 'With_OOD','Seed', 
+                                        'Uncertainty','True error', 'Optimal', 'Count'])
     
     entropies = pd.DataFrame(columns=['Model Type', 'Method', 'Calibration Method', 'With_OOD','Seed', 
                                         'Entropy_dist','Entropy'])
@@ -85,6 +87,7 @@ def main():
                 b['Class Metrics']['Method'] = [b['Method']]*len(b['Class Metrics'])
                 b['Class Metrics']['Calibration Method'] = [b['Calibration Method']]*len(b['Class Metrics'])
                 b['Class Metrics']['Seed'] = [b['Seed']]*len(b['Class Metrics'])
+                b['Class Metrics']['With_OOD'] = [b['With_OOD']]*len(b['Class Metrics'])
                 class_data = pd.concat([class_data,b['Class Metrics']],axis=0)
                 
                 # acc_inacc_certain
@@ -176,6 +179,16 @@ def main():
                 b['Uncertainty Calibration']['With_OOD'] = [b['With_OOD']]*len(b['Uncertainty Calibration'])
                 uncert_cali = pd.concat([uncert_cali,b['Uncertainty Calibration']],axis=0)
                 
+                # Uncertainty calibration
+                if 'Uncertainty Calibration (OOD)' in b.keys():
+                    if b['Uncertainty Calibration (OOD)'] is not None:
+                        b['Uncertainty Calibration (OOD)']['Model Type'] = [b['Model Type']]*len(b['Uncertainty Calibration (OOD)'])
+                        b['Uncertainty Calibration (OOD)']['Method'] = [b['Method']]*len(b['Uncertainty Calibration (OOD)'])
+                        b['Uncertainty Calibration (OOD)']['Calibration Method'] = [b['Calibration Method']]*len(b['Uncertainty Calibration (OOD)'])
+                        b['Uncertainty Calibration (OOD)']['Seed'] = [b['Seed']]*len(b['Uncertainty Calibration (OOD)'])
+                        b['Uncertainty Calibration (OOD)']['With_OOD'] = [b['With_OOD']]*len(b['Uncertainty Calibration (OOD)'])
+                        uncert_cali_ood = pd.concat([uncert_cali_ood,b['Uncertainty Calibration (OOD)']],axis=0)
+                
                 # Entropies
                 entropies_id_file = pd.DataFrame(columns=['Model Type', 'Method', 'Calibration Method', 'With_OOD','Seed', 
                                         'Entropy_dist','Entropy'])
@@ -200,16 +213,221 @@ def main():
                 entropies = pd.concat([entropies,entropies_id_file,entropies_ood_file],axis=0)
                 
                 
-                
-    pdb.set_trace()
+    print(metrics_data.groupby(['Model Type','Method','Calibration Method','With_OOD']).count())
 
-    entropies['Model'] = entropies['']
-    fig, ax = plt.subplots(1,1,figsize=(10,6))
-    sns.kdeplot(
-    data=entropies, x="total_bill", hue="",
-    fill=True, common_norm=False, palette="crest",
-    alpha=.5, linewidth=0,
-    )
+
+
+    # ! --------------------------- METRICS MEANS AND STDS ---------------------------------
+    dataset = metrics_data
+    dataset['Model Type short'] = dataset['Model Type'].replace({'BayesianTripletLoss':'BTL'},regex=True)
+    dataset['Model'] = dataset['Model Type short'] + '-' + dataset['Calibration Method']
+    
+    (dataset.groupby(["Model","Method","With_OOD"]).agg(["mean","std"])).drop(columns=["Seed",'Uncertainty_simple_thresh',"Uncertainty_best_thresh","AvU_best_thresh","AvU_simple_thresh"])
+
+
+    # ! --------------------------- CLASS-WISE METRICS ---------------------------------
+    
+    if True:
+        metrics = ['Average precision','acc_top1','Class Expected Calibration Error']
+        ylabel = ['Average Precision','Accuracy','Class-wise ECE']
+
+        for j,ood in enumerate([True,False]):
+            
+            dataset = class_data[class_data['With_OOD']==ood]
+            dataset = dataset.sort_values(['index'])
+            if ood == True:
+                hue_order = ['BTL_iso-None','BTL_iso-MCDropout','BTL_iso-SWAG','BTL_iso-Ensemble']
+                palette = sns.color_palette("magma_r", as_cmap=False,n_colors=4)
+            else:
+                hue_order = ['BTL_iso-None','BTL_iso-MCDropout','BTL_iso-SWAG','BTL_iso-Ensemble',
+                            'Classic-None','Classic-MCDropout','Classic-SWAG','Classic-TempScaling',
+                            'Classic-Ensemble']
+                palette = sns.color_palette("magma_r", as_cmap=False,n_colors=4) + sns.color_palette("mako_r", as_cmap=False,n_colors=5)
+                
+            fig, axes = plt.subplots(3,1,figsize=(12,16),sharex=True)
+            
+            for indx,metric in enumerate(metrics):
+                ax = axes.flatten()[indx]
+                dataset = dataset[dataset['Model Type']!='BayesianTripletLoss_diag']
+                dataset = dataset[dataset['Method'] != 'kNN_gauss_kernel']
+                
+                dataset['Model Type short'] = dataset['Model Type'].replace({'BayesianTripletLoss':'BTL'},regex=True)
+                dataset['Model'] = dataset['Model Type short'] + '-' + dataset['Calibration Method']
+                
+                plt.subplots_adjust(left=0.1, right=0.95, top=0.9, bottom=0.1,wspace=0.15,hspace=0.05)
+                sns.barplot(y=metric,x='index',data=dataset,ax=ax,hue_order=hue_order,hue='Model',palette=palette,errorbar=("se",2))
+                
+                if indx != 2:
+                    ax.set_xlabel(None)
+                    ax.get_legend().remove()
+                else:
+                    ax.get_legend().get_title().set_text('$\\bf{Model}$')
+                    ax.set_xlabel('Class',fontsize=14,weight='bold')
+                    ax.xaxis.set_label_coords(0.5, -0.25) 
+                    xlabels = dataset['index'].unique()
+                    ax.set_xticklabels(xlabels, rotation=45, rotation_mode="anchor",fontsize=12,ha='right')
+                    
+                for patch in ax.patches:
+                    clr = patch.get_facecolor()
+                    clr = list(clr)
+                    clr[3] = 0.0
+                    clr = tuple(clr)
+                    patch.set_edgecolor(clr)
+                    patch.set_linewidth(2.5)
+                    if ood == True:
+                        patch.set_width(0.17)
+                    else:
+                        patch.set_width(0.073)
+                        
+                ax.set_ylabel(ylabel[indx],fontsize=14, weight='bold')
+                ax.yaxis.set_label_coords(-.075, .5) 
+                
+                
+                    
+            fig.savefig(f'./reports/test/classwise_{ood}.png')
+                
+
+
+
+    # ! --------------------------- GRAPHS ---------------------------------
+
+    if True:
+        
+        
+        datasets = [uncertain_when_inacc,accurate_when_certain,calibration_vs_acc,uncert_cali,
+                    uncert_cali_ood,
+                    acc_inacc_certain]
+        names = ['uncertain_when_inacc','accurate_when_certain','calibration_vs_acc','uncert_cali',
+                 'uncert_cali_ood','acc_inacc_certain']
+        x_vals = ['Uncertainty_thresh','Uncertainty_thresh','Confidence','Uncertainty',
+                  'Uncertainty','Inaccurat_certain_ratio']
+        y_vals = ['Recall_inacc','Accuracy','Accuracy','True error','True error','Accurat_certain_ratio']
+        xlabel = ['Uncertainty threshold','Uncertainty threshold',r'Confidence $\tau$','Uncertainty',
+                  'Uncertainty','Inaccurate Certain Rate (ICR)']
+        ylabel = ['p(uncertain|inaccurate)','p(accurate|certain)',
+                  r'Accuracy on examples: $p(y|x)\geq \tau$','True error','True error',
+                  'Accurate Certain Rate (ACR)']
+        title = [r'Uncertain when inaccurate $(\uparrow)$',r'Accurate when certain $(\uparrow)$',
+                 r'Confidence vs. Accuracy $(\uparrow)$', 'UCE plot','UCE plot (OOD samples)',
+                 r'ROC (using certainty) $(\uparrow)$']
+        
+        index = [0,1]
+        
+        fig, axes = plt.subplots(1,2,figsize=(15,5),sharey=True)
+        
+        for i,dataset in enumerate(datasets):
+            if (i < 3) | (i==5):
+                continue;
+            ax = axes.flatten()[index[i-3]]
+            dataset = dataset[dataset['Model Type']!='BayesianTripletLoss_diag']
+            dataset = dataset[dataset['Method'] != 'kNN_gauss_kernel']
+            if i != 4:
+                dataset = dataset[dataset['With_OOD'] != True]
+            else:
+                dataset = dataset[dataset['With_OOD'] == True]
+            dataset = dataset.reset_index()
+            
+            dataset['Model Type short'] = dataset['Model Type'].replace({'BayesianTripletLoss':'BTL'},regex=True)
+            dataset['Model'] = dataset['Model Type short'] + '-' + dataset['Calibration Method']
+            
+            hue_order = ['BTL_iso-None','BTL_iso-MCDropout','BTL_iso-SWAG','BTL_iso-Ensemble',
+                        'Classic-None','Classic-MCDropout','Classic-SWAG','Classic-TempScaling',
+                        'Classic-Ensemble']
+            palette = sns.color_palette("magma_r", as_cmap=False,n_colors=4) + sns.color_palette("mako_r", as_cmap=False,n_colors=5)
+
+
+            
+            if (i != 3) & (i != 4):
+                sns.lineplot(x=x_vals[i], y=y_vals[i],errorbar=("se",1), hue="Model", data=dataset,ax=ax,palette=palette,hue_order=hue_order,style="Model Type")
+            else:
+                dataset['error_var'] = dataset['True error']*(1-dataset['True error'])/dataset['Count']
+                dataset['error_var_times_count'] = dataset['error_var']*dataset['Count']
+                dataset['True error_times_count'] = dataset['True error']*dataset['Count']
+
+                dataset_errors = dataset.groupby(['Model','Uncertainty'])['error_var_times_count'].agg('sum')
+                dataset_count = dataset.groupby(['Model','Uncertainty'])['Count'].agg('sum')
+                dataset_errors_se = (dataset_errors/dataset_count)*(1/2)
+
+                if i == 3:
+                    dataset_errors_se = dataset_errors_se.loc[hue_order]
+                    sns.lineplot(x=x_vals[i], y=y_vals[i], hue="Model", data=dataset,ax=ax,palette=palette,hue_order=hue_order,style="Model Type",errorbar=None)
+                    sns.lineplot(x=x_vals[i], y='Optimal',color='black',data=dataset,ax=ax,label='Optimal',linestyle=':')
+                else:
+                    hue_order = ['BTL_iso-None','BTL_iso-MCDropout','BTL_iso-SWAG','BTL_iso-Ensemble']
+                    dataset_errors_se = dataset_errors_se.loc[hue_order]
+                    sns.lineplot(x=x_vals[i], y=y_vals[i], hue="Model", data=dataset,ax=ax,palette=palette,hue_order=hue_order,linestyle='--',errorbar=None)
+                    sns.lineplot(x=x_vals[i], y='Optimal',color='black',data=dataset,ax=ax,label='Optimal',linestyle=':',linewidth=2)
+                
+                    
+                dataset_errors_se = dataset_errors_se.reset_index().set_index('Model')    
+                dataset_mean = dataset.groupby(['Model','Uncertainty']).agg({'True error_times_count': lambda x: x.sum(skipna=True)})
+                dataset_mean['True error'] = dataset_mean.values.flatten()/dataset_count.astype(float).values.flatten()
+                dataset_mean = dataset_mean.drop(columns="True error_times_count")
+                dataset_mean = dataset_mean.reset_index().set_index('Model')
+
+                for indx,model in enumerate(dataset_errors_se.index.unique()):
+                    mean = dataset_mean.loc[model]['True error']
+                    x = dataset_mean.loc[model]['Uncertainty']
+                    #pdb.set_trace()
+                    ymin = mean-2*dataset_errors_se.loc[model].iloc[:,-1].astype(float)
+                    ymax = mean+2*dataset_errors_se.loc[model].iloc[:,-1].astype(float)
+                    ymin = np.maximum(0,ymin)
+                    ymax = np.minimum(1,ymax)
+                    ax.fill_between(x,ymin,ymax, color=palette[indx],alpha=0.15)
+                
+           
+            plt.subplots_adjust(left=0.075, right=0.8, top=0.9, bottom=0.15,wspace=0.1,hspace=0.1)
+            ax.set_xlabel(xlabel[i],fontsize=14, weight='bold')
+            ax.set_ylabel(ylabel[i],fontsize=14, weight='bold')
+            ax.yaxis.set_label_coords(-.1, .5)
+            ax.set_title(title[i],fontsize=16,weight='bold',y=1.02)
+            
+            if index[i-3] == 0:
+                ax.legend(bbox_to_anchor=(2.62, 1), borderaxespad=0)
+                ax.get_legend().get_texts()[0].set_text('$\\bf{Model}$')
+                ax.get_legend().get_texts()[10].set_text('\n$\\bf{Model Type}$')
+            else:
+                ax.get_legend().remove()
+        
+        
+        fig.savefig(f'./reports/test/graphs.png')
+    
+
+
+
+    # ! --------------------------- ENTROPY GRAPHS ---------------------------------
+
+    if True:
+        entropies_ID_vs_OOD = entropies[entropies['With_OOD']==False]
+        entropies_ID_vs_OOD = entropies_ID_vs_OOD[entropies_ID_vs_OOD['Method']!='kNN_gauss_kernel'].sort_values(['Model Type'])
+        
+        fig, ax = plt.subplots(3,5,figsize=(18,12),sharex=True,sharey=True)
+        for i,model_type in enumerate(entropies_ID_vs_OOD['Model Type'].unique()):
+            for j, cali_meth in enumerate(['None','MCDropout','SWAG','TempScaling', 'Ensemble']):
+                #pdb.set_trace()
+                sns.kdeplot(data=entropies_ID_vs_OOD[(entropies_ID_vs_OOD['Model Type'] == model_type) & 
+                                                    (entropies_ID_vs_OOD['Calibration Method'] == cali_meth)],
+                            x="Entropy", hue="Entropy_dist",fill="Entropy_dist", common_norm=False, 
+                            palette="crest_r",alpha=.5, linewidth=1,ax=ax[i,j],
+                            hue_order=['ID','OOD'])
+                
+                # Set title
+                if j == 0:
+                    if model_type == 'Classic':
+                        ax[i,j].set_ylabel('Vanilla',fontsize = 15, weight='bold')
+                    elif model_type == 'BayesianTripletLoss_iso':
+                        ax[i,j].set_ylabel('BTL_Iso',fontsize = 15, weight='bold')
+                    elif model_type == 'BayesianTripletLoss_diag':
+                        ax[i,j].set_ylabel('BTL_Diag',fontsize = 15, weight='bold')
+                    
+                    ax[i,j].yaxis.set_label_coords(-.25, .5)
+                
+                # Set y-axis
+                if i == 0:
+                    ax[i,j].set_title(cali_meth,fontsize = 14, weight='bold',y=1.05)
+                    
+        
+        fig.savefig('./reports/test/entropy.png')
 
 
 
@@ -239,7 +457,7 @@ def main():
     metrics_iso_with_OOD = metrics_iso_with_OOD.sort_values(['Model Type'])
 
     
-    if False:
+    if True:
         scale_fig = [1,1,1,1]
         figsize = [13.33,10,14,19]
         width_ratio = [[5,5,3.33],[5,5],[3,3,4],[3,3,3,3,4]]
@@ -255,7 +473,6 @@ def main():
         
         # * PLOT ALL WITHOUT OOD
         # Plot map
-        sns.set()
         metrics = (['MaP', 'Accuracy top1', 'UCE', 'CECE', 'ACE', 'AECE', 'WECE', 'AUC_AvU'])
         arrows = ["->","->","<-","<-","<-","<-","<-","->"]
         arrow_adjust = [0,0,0.02,0.02,0.02,0.02,0.02,0]
@@ -289,6 +506,24 @@ def main():
                                 order = order[k])
                     
                     
+                    if 'Ensemble' in df_type['Calibration Method'].value_counts().keys():
+                        if df_type['Calibration Method'].value_counts()['Ensemble'] == 1:
+                            y = df_type[metric][df_type['Calibration Method']=='Ensemble'].item()
+                            ax.flatten()[i+j*num_types].axhline(y, 0.04, 0.96,label='Ensemble',lw=1,linestyle='--',color=colors[-1])
+                        else:
+                            try:
+                                y1 = df_type[metric][(df_type['Calibration Method']=='Ensemble') &
+                                                    (df_type['Method']=='kNN_gauss_kernel')].item()
+                                y2 = df_type[metric][(df_type['Calibration Method']=='Ensemble') &
+                                                    (df_type['Method']=='min_dist_NN')].item()
+                            except:
+                                pdb.set_trace()
+                            
+                            ax.flatten()[i+j*num_types].axhline(y1, 0.05, 0.46,lw=1,linestyle='--',color=colors[-1])
+                            ax.flatten()[i+j*num_types].axhline(y2, 0.55, 0.96,lw=1,linestyle='--',color=colors[-1])
+
+                        
+                        
                     plt.subplots_adjust(left=0.1, right=0.82, top=0.95, bottom=0.05,wspace=0,hspace=0.05)
                     plt.tight_layout()
                     
@@ -324,6 +559,7 @@ def main():
                     else:
                         ax.flatten()[i+j*num_types].legend(bbox_to_anchor=(1.12, 1), borderaxespad=0,
                                             title="Calibration method")
+                        
                         
                     # Remove x-labels
                     ax.flatten()[i+j*num_types].set_xlabel('')

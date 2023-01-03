@@ -1,10 +1,10 @@
 #!/bin/bash
-export R=_BTM_diag_test
+export R=_BTM_collaps_too_large_kl_contribution
 ### NAME OF FILE
-#BSUB -J config_BTM_diag_test
+#BSUB -J config_BTM_collaps_too_large_kl_contribution
 ### OUTPUT AND ERROR FILE
-#BSUB -o config_hpc/config_BTM_diag_test.out
-#BSUB -e config_hpc/config_BTM_diag_test.err
+#BSUB -o config_hpc/config_BTM_collaps_too_large_kl_contribution.out
+#BSUB -e config_hpc/config_BTM_collaps_too_large_kl_contribution.err
 ### QUEUE TO BE USED
 #BSUB -q gpuv100
 ### gpu memory
@@ -27,5 +27,5 @@ rm config_hpc/config${R}.err
 source init.sh
 wandb online
 
-python3 src/training_test/train_classifier_model2.py --config-filename=training${R}
+python3 src/training_test/train_classifier_model.py --config-filename=training${R}
 

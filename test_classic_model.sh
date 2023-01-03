@@ -1,10 +1,10 @@
 #!/bin/bash
 ### Settings for test run
 export R=1
-export model_name=lucky-aardvark-1727
+export model_name=helpful-moon-1980
 export model_database=TRAINVAL
 export test_dataset=test
-export calibration_method=TempScaling
+export calibration_method=Ensemble
 
 #None
 #TempScaling

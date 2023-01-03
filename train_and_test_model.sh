@@ -1,10 +1,10 @@
 #!/bin/bash
-export R=_BTM_diag2
+export R=_BTM_diag6
 ### NAME OF FILE
-#BSUB -J config_BTM_diag2
+#BSUB -J config_BTM_diag6
 ### OUTPUT AND ERROR FILE
-#BSUB -o config_hpc/config_BTM_diag2.out
-#BSUB -e config_hpc/config_BTM_diag2.err
+#BSUB -o config_hpc/config_BTM_diag6.out
+#BSUB -e config_hpc/config_BTM_diag6.err
 ### QUEUE TO BE USED
 #BSUB -q gpuv100
 ### gpu memory
@@ -28,9 +28,8 @@ source init.sh
 wandb online
 
 # Run model
-out=( $(python3 src/training_test/train_classifier_model2.py --config-filename=training${R}) )
+out=( $(python3 src/training_test/train_classifier_model.py --config-filename=training${R}) )
 model_name=${out[0]}
-
 
 # Test model
 export model_database=TRAINVAL

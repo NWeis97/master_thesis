@@ -1,10 +1,10 @@
 #!/bin/bash
-export R=_Vanilla3
+export R=_Vanilla6
 ### NAME OF FILE
-#BSUB -J config_Vanilla3
+#BSUB -J config_Vanilla6
 ### OUTPUT AND ERROR FILE
-#BSUB -o config_hpc/config_Vanilla3.out
-#BSUB -e config_hpc/config_Vanilla3.err
+#BSUB -o config_hpc/config_Vanilla6.out
+#BSUB -e config_hpc/config_Vanilla6.err
 ### QUEUE TO BE USED
 #BSUB -q gpuv100
 ### gpu memory

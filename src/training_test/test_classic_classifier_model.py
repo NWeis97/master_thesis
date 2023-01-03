@@ -7,6 +7,9 @@ import pandas as pd
 import torch
 import ast
 import pickle
+import json
+import os
+import shutil
 
 # Own imoprts
 from src.models.image_classifier import ImageClassifier, init_classifier_model
@@ -53,17 +56,62 @@ def main(args):
                 job_type="Test"
         )
     
-    # Extract classifier model
-    classifier = init_classifier_model(classifier_model,
-                                       database_model,
-                                       calibration_method=calibration_method)
-
-    # Calculate probabilities
-    (probs_df, 
-     objects, 
-     bboxs, 
-     true_classes) = classifier.get_probability_dist_dataset(test_dataset)
     
+    # Extract classifier model
+    if calibration_method == 'Ensemble':
+        classifier = init_classifier_model(classifier_model,
+                                       database_model,
+                                       calibration_method='None')
+    else:
+        classifier = init_classifier_model(classifier_model,
+                                        database_model,
+                                        calibration_method=calibration_method)
+        
+    
+    
+    if calibration_method != 'Ensemble':
+        # Calculate probabilities
+        (probs_df, 
+        objects, 
+        bboxs, 
+        true_classes) = classifier.get_probability_dist_dataset(test_dataset)
+    else:
+        # Get objects, bboxs, and true_classes
+        # Calculate probabilities
+        (probs_df, 
+        objects, 
+        bboxs, 
+        true_classes) = classifier.get_probability_dist_dataset(test_dataset)
+        
+        # Extract probabilities from same classifiers 
+        # Get names of runs with same settings:
+        file_names = os. listdir('models/state_dicts_classic/.')
+        
+        # Get current files params
+        with open(f'./models/params/{classifier_model}.json', 'r') as f:
+            data = json.load(f)
+        
+        data.pop('seed')
+        data.pop('temp_opt')
+        
+        # Open params and check if same settings
+        count = 1
+        for file in file_names:
+            with open(f'./models/params/{file[:-3]}.json', 'r') as f:
+                cur_data = json.load(f)
+            cur_data.pop('seed',None)
+            cur_data.pop('temp_opt',None)
+
+            if (cur_data == data) & (file[:-3] != classifier_model):
+                probs_file_name = classifier._get_test_file_storing_name_()
+                probs_file_name = probs_file_name.split('_')[1:]
+                probs_file_name = file[:-3] + '_' + '_'.join(probs_file_name) + '.csv'
+                cur_probs_df = pd.read_csv(f'./reports/probability_distributions_classic/{probs_file_name}',index_col=0)
+                
+                probs_df = (probs_df*count+cur_probs_df)/(count+1)
+                count += 1
+                
+        
     
     #* -------------------------------------------
     #* ------ Remove classes not trained on ------

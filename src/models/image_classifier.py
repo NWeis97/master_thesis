@@ -457,16 +457,16 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
         mean_emb, var_emb, backbone_emb = self._get_embedding_(img_name,bbox)
         
         if self.calibration_method == 'None':
-            
-            dist = (torch.pow(self.means-mean_emb[None,:].T+1e-6, 2).sum(dim=0).sqrt())
-            _, ranks = torch.sort(dist, dim=0, descending=False)
-            
-            if method == 'min_dist_NN':    
-                probs = self._min_dist_NN_(ranks, mean_emb, var_emb, num_NN, num_MC)
-            elif method == 'kNN_gauss_kernel':
-                probs = self._kNN_gauss_kernel_(ranks, mean_emb, var_emb, num_NN, dist_classes)
-            else:
-                raise ValueError('Method does not exist')
+            with torch.no_grad():
+                dist = (torch.pow(self.means-mean_emb[None,:].T+1e-6, 2).sum(dim=0).sqrt())
+                _, ranks = torch.sort(dist, dim=0, descending=False)
+                
+                if method == 'min_dist_NN':    
+                    probs = self._min_dist_NN_(ranks, mean_emb, var_emb, num_NN, num_MC)
+                elif method == 'kNN_gauss_kernel':
+                    probs = self._kNN_gauss_kernel_(ranks, mean_emb, var_emb, num_NN, dist_classes)
+                else:
+                    raise ValueError('Method does not exist')
         
         
         elif (self.calibration_method == 'SWAG') | (self.calibration_method == 'MCDropout'):
@@ -749,6 +749,7 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
                                      method,
                                      test_dataset,
                                      dist_classes):
+        
         if method == 'min_dist_NN':
             file_name = (f'{self.model_name}_{self.model_data}_'+
                             f'{self.balanced_classes}_numNN{num_NN}_'+
