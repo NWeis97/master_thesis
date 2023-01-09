@@ -1,10 +1,10 @@
 #!/bin/bash
-export R=_BTM_diag6
+export R=_BTM_diag9
 ### NAME OF FILE
-#BSUB -J config_BTM_diag6
+#BSUB -J config_BTM_diag9
 ### OUTPUT AND ERROR FILE
-#BSUB -o config_hpc/config_BTM_diag6.out
-#BSUB -e config_hpc/config_BTM_diag6.err
+#BSUB -o config_hpc/config_BTM_diag9.out
+#BSUB -e config_hpc/config_BTM_diag9.err
 ### QUEUE TO BE USED
 #BSUB -q gpuv100
 ### gpu memory

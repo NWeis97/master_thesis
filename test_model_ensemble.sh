@@ -1,7 +1,7 @@
 #!/bin/bash
 ### Settings for test run
 export R=1
-export model_name=copper-vortex-1980
+export model_name=autumn-bush-2764
 export model_database=TRAINVAL
 export balanced_dataset=-1350
 export test_dataset=test
@@ -15,6 +15,7 @@ export calibration_method=Ensemble
 
 #kNN_gauss_kernel
 #min_dist_NN
+#helpful-bird-2766
 
 #SWAG
 #None
@@ -52,7 +53,7 @@ python3 src/training_test/test_classifier_model.py --model-name=${model_name} --
 python3 src/training_test/test_classifier_model.py --model-name=${model_name} --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN_kNN} --num-MC=${num_MC} --method=kNN_gauss_kernel --with_OOD=True --dist_classes=${dist_classes} --calibration_method=${calibration_method}
 
 
-python3 src/training_test/test_classifier_model.py --model-name=warm-wind-1979 --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN} --num-MC=${num_MC} --method=${method} --with_OOD=False --dist_classes=${dist_classes} --calibration_method=${calibration_method}
-python3 src/training_test/test_classifier_model.py --model-name=warm-wind-1979 --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN} --num-MC=${num_MC} --method=${method} --with_OOD=True --dist_classes=${dist_classes} --calibration_method=${calibration_method}
-python3 src/training_test/test_classifier_model.py --model-name=warm-wind-1979 --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN_kNN} --num-MC=${num_MC} --method=kNN_gauss_kernel --with_OOD=False --dist_classes=${dist_classes} --calibration_method=${calibration_method}
-python3 src/training_test/test_classifier_model.py --model-name=warm-wind-1979 --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN_kNN} --num-MC=${num_MC} --method=kNN_gauss_kernel --with_OOD=True --dist_classes=${dist_classes} --calibration_method=${calibration_method}
+python3 src/training_test/test_classifier_model.py --model-name=helpful-bird-2766 --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN} --num-MC=${num_MC} --method=${method} --with_OOD=False --dist_classes=${dist_classes} --calibration_method=${calibration_method}
+python3 src/training_test/test_classifier_model.py --model-name=helpful-bird-2766 --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN} --num-MC=${num_MC} --method=${method} --with_OOD=True --dist_classes=${dist_classes} --calibration_method=${calibration_method}
+python3 src/training_test/test_classifier_model.py --model-name=helpful-bird-2766 --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN_kNN} --num-MC=${num_MC} --method=kNN_gauss_kernel --with_OOD=False --dist_classes=${dist_classes} --calibration_method=${calibration_method}
+python3 src/training_test/test_classifier_model.py --model-name=helpful-bird-2766 --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN_kNN} --num-MC=${num_MC} --method=kNN_gauss_kernel --with_OOD=True --dist_classes=${dist_classes} --calibration_method=${calibration_method}

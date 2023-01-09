@@ -130,10 +130,12 @@ class ImageClassifierNet_BayesianTripletLoss(nn.Module):
         
         # Init swag
         if self.with_swag:
-            self.head_mean__mean = []
-            self.head_mean__var = []
-            self.head_std__mean = []
-            self.head_std__var = []
+            self.head_mean__mean = None
+            self.head_mean__var = None
+            self.head_std__mean = None
+            self.head_std__var = None
+            
+            
 
     def forward(self, x):
         o = self.forward_backbone(x)
@@ -220,6 +222,33 @@ class ImageClassifierNet_BayesianTripletLoss(nn.Module):
               
         return output
 
+    def reset_batchnorm_running_stats(self):
+        for name, module in self.named_children():
+            if name.split('.')[0] != 'features':
+                if (isinstance(module,nn.BatchNorm2d)) | (isinstance(module,nn.BatchNorm1d)):
+                    module.reset_running_stats()
+                    
+        return self
+        
+    def set_params_to_mean(self):
+        if self.with_swag:
+            if self.head_mean__mean is not None:
+                count_mean = 0
+                count_var = 0
+                for idx, (name, param) in enumerate(self.named_parameters()):
+                    if name.split('.')[0] != 'features':
+                        if name.split('_')[0] == 'mean':
+                            param.data = self.head_mean__mean[count_mean]
+                            count_mean += 1
+                        else:
+                            param.data = self.head_mean__var[count_var]
+                            count_var += 1
+            else:
+                logger.info("Function can not be called, since mean of heads has not been calculated yet")
+        else:
+            logger.info("Function can not be called, since model is not constructed with SWAG")
+        
+        return self
     def __repr__(self):
         tmpstr = super(ImageClassifierNet_BayesianTripletLoss, self).__repr__()[:-1]
         tmpstr += self.meta_repr()
@@ -292,7 +321,7 @@ class ImageClassifierNet_BayesianTripletLoss(nn.Module):
             else:
                 if isinstance(module, torch.nn.Dropout):
                     module.train(True)
-                    module.p = 0.25
+                    module.p = 0.15
                 else:
                     module.train(mode_train)
         return self
@@ -492,7 +521,7 @@ class ImageClassifierNet_Classic(nn.Module):
             else:
                 if isinstance(module, torch.nn.Dropout):
                     module.train(True)
-                    module.p = 0.25
+                    module.p = 0.15
                 else:
                     module.train(mode_train)
         return self

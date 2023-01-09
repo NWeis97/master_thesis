@@ -267,6 +267,8 @@ def get_UCE(probs_df: pd.DataFrame,
             true_classes: list,
             num_classes: int):
     true_classes = np.array(true_classes)
+    true_classes_unique = pd.unique(true_classes).tolist()
+    true_classes_unique.append('Combined')
     pred_classes = probs_df.idxmax(0)
     
     # Get uncertainties
@@ -278,9 +280,8 @@ def get_UCE(probs_df: pd.DataFrame,
     uncert_targets[0] -= 0.01
     uncert_targets[-1] += 0.01
     
-    inacc_targets = np.array(uncert_bins)/((num_classes-1)/float(num_classes))
     # Init series
-    uncert_cali_plot_df = pd.DataFrame(index = inacc_targets, columns=['True error','Count'])
+    uncert_cali_plot_df = pd.DataFrame(index = range(len(uncert_bins)), columns=['Uncertainty','True error','Count'])
     
     # Calc expected vs. actual:
     for i in range(len(uncert_bins)):
@@ -289,21 +290,54 @@ def get_UCE(probs_df: pd.DataFrame,
         trues = true_classes[idx_in_bin]
         frac_inaccurate = np.mean(preds != trues)
         
+        uncert_cali_plot_df['Uncertainty'].iloc[i] = np.mean(uncertainty[idx_in_bin])
         uncert_cali_plot_df['True error'].iloc[i] = frac_inaccurate
         uncert_cali_plot_df['Count'].iloc[i] = np.sum(idx_in_bin)
         
     # Calculate UCE
     n = uncert_cali_plot_df['Count'].sum()
-    UCE = np.sum(uncert_cali_plot_df['Count']/n*
-                 np.abs(uncert_cali_plot_df['True error']-uncert_cali_plot_df.index))
-    
-    uncert_cali_plot_df = uncert_cali_plot_df.reset_index().rename(columns={'index':'Uncertainty'})
     uncert_cali_plot_df['Optimal'] = uncert_cali_plot_df['Uncertainty']*(num_classes-1)/(num_classes)
+    UCE = np.sum(uncert_cali_plot_df['Count']/n*
+                 np.abs(uncert_cali_plot_df['True error']-uncert_cali_plot_df['Optimal']))
     
     # Get UCE plots
     fig = UCE_plots(uncert_cali_plot_df)
     
-    return UCE, fig, uncert_cali_plot_df, uncertainty
+    
+    
+    #* Class-wise
+    uncert_class_df_error = pd.DataFrame(index = range(len(uncert_bins)), 
+                                                 columns=true_classes_unique)
+    uncert_class_df_uncert = pd.DataFrame(index = range(len(uncert_bins)), 
+                                                 columns=true_classes_unique)
+    uncert_class_df_count = pd.DataFrame(index = range(len(uncert_bins)), 
+                                                 columns=true_classes_unique)
+    
+    # reset true classes
+    true_classes_unique = pd.unique(true_classes).tolist()
+    
+    
+    for i in range(len(uncert_bins)):
+        idx_in_bin = (uncertainty>=uncert_targets[i]) & (uncertainty<uncert_targets[i+1])
+        uncert_class_df_error.iloc[i]['Combined'] = uncert_cali_plot_df.loc[i]['True error']
+        uncert_class_df_uncert.iloc[i]['Combined'] = uncert_cali_plot_df.loc[i]['Uncertainty']
+        uncert_class_df_count.iloc[i]['Combined'] = uncert_cali_plot_df.loc[i]['Count']
+        
+        for class_ in true_classes_unique:
+            idx_in_class = class_ == true_classes
+            idx_in_bin_and_class = (idx_in_bin*idx_in_class)
+            preds = pred_classes[idx_in_bin_and_class]
+            trues = true_classes[idx_in_bin_and_class]
+            frac_inaccurate = np.mean(preds != trues)
+            
+            uncert_class_df_uncert.iloc[i][class_] = np.mean(uncertainty[idx_in_bin_and_class])
+            uncert_class_df_error.iloc[i][class_] = frac_inaccurate
+            uncert_class_df_count.iloc[i][class_] = np.sum(idx_in_bin_and_class)
+    
+    
+    
+    return (UCE, fig, uncert_cali_plot_df, uncertainty, 
+            uncert_class_df_uncert, uncert_class_df_error, uncert_class_df_count)
 
 
 def get_AvU(probs_df: pd.DataFrame,

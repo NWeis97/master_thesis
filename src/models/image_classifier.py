@@ -25,7 +25,8 @@ class ImageClassifier():
                  model_type: str,
                  params: dict,
                  model_data: str,
-                 with_OOD: bool = False):
+                 with_OOD: bool = False,
+                 calibration_method: str = 'None'):
         
         # *****************************************
         # ******** Initialize model data **********
@@ -38,6 +39,7 @@ class ImageClassifier():
         self.with_OOD = with_OOD
         self.model_data = model_data
         self.model_name = model_name
+        self.calibration_method = calibration_method
         db = self._create_db_for_model_data_()
         
         # List of all classes
@@ -54,7 +56,10 @@ class ImageClassifier():
         torch.manual_seed(self.params['seed'])
         self.model = init_network(self.model_type, self.params)
         if self.model_type == 'BayesianTripletLoss':
-            self.model.load_state_dict(torch.load(f'models/state_dicts/{self.model_name}.pt'))
+            if self.calibration_method == 'SWAG':
+                self.model.load_state_dict(torch.load(f'models/state_dicts_swag/{self.model_name}.pt'))
+            else:
+                self.model.load_state_dict(torch.load(f'models/state_dicts/{self.model_name}.pt'))
         else:
             self.model.load_state_dict(torch.load(f'models/state_dicts_classic/{self.model_name}.pt'))
         self.model.cuda()
@@ -264,9 +269,8 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
                                     'balanced_classes' number of objects for each class.
                                     Defaults to 0 (no balancing of data).
         """
-        super().__init__(model_name, model_type, params, model_data, with_OOD)
+        super().__init__(model_name, model_type, params, model_data, with_OOD,calibration_method)
         self.balanced_classes = balanced_classes
-        self.calibration_method = calibration_method
         
         # ************************************************************************
         # ******** Extract means, variance and classes for model data  ***********
@@ -280,14 +284,16 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
             torch.save(self.vars,file_name+'vars.pt')
             torch.save(self.classes,file_name+'classes.pt')
         else:
-            if (self.calibration_method == 'SWAG') | (self.calibration_method == 'MCDropout'):
+            if ((self.calibration_method == 'SWAG') | (self.calibration_method == 'MCDropout')):
                 logger.info('SWAG and MCDropout calibration need backbone representations... Loading them first')
                 self.means, self.vars, self.backbone_repr, self.classes = self._extract_means_and_variances_()
-            else:   
+            
+            else:
                 logger.info('Loading already existing classifier model')
                 self.means = torch.load(file_name+'means.pt')
                 self.vars = torch.load(file_name+'vars.pt')
                 self.classes = torch.load(file_name+'classes.pt')
+                self.backbone_repr = None
             
                 
    
@@ -298,6 +304,7 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
             if self.model.with_swag == False:
                 raise ValueError("Model can not be evaulated with SWAG - does not exist")
             else:
+                logger.info('Loading SWAG headers')
                 self.model.head_mean__mean = torch.load(f'./models/swag_headers/{model_name}_mean_swag__mean.pt')
                 self.model.head_mean__var = torch.load(f'./models/swag_headers/{model_name}_mean_swag__var.pt')
                 self.model.head_std__mean = torch.load(f'./models/swag_headers/{model_name}_std_swag__mean.pt')
@@ -344,12 +351,23 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
         file_name_embs = self._get_embedding_file_storing_name_()
         file_name_embs = f'./reports/embeddings_test/' + file_name_embs + f'_{test_dataset}'
         
-        # If probs habe not already been calculated, extract them
+        # If probs have not already been calculated, extract them
         if exists(file_name_probs) == False:
             logger.info('Extracting probability distributions')
-            probs_df = pd.DataFrame(np.zeros((len(self.unique_classes),len(classes))),
-                                    columns = [i for i in range(len(classes))],
-                                    index = self.unique_classes)
+            if method == 'mixed':
+                probs_df_min = pd.DataFrame(np.zeros((len(self.unique_classes),len(classes))),
+                                        columns = [i for i in range(len(classes))],
+                                        index = self.unique_classes)
+                probs_df_gauss = pd.DataFrame(np.zeros((len(self.unique_classes),len(classes))),
+                                        columns = [i for i in range(len(classes))],
+                                        index = self.unique_classes)
+                probs_df_mixed = pd.DataFrame(np.zeros((len(self.unique_classes),len(classes))),
+                                        columns = [i for i in range(len(classes))],
+                                        index = self.unique_classes)
+            else:
+                probs_df = pd.DataFrame(np.zeros((len(self.unique_classes),len(classes))),
+                                        columns = [i for i in range(len(classes))],
+                                        index = self.unique_classes)
             
             # For storing mean_emb and var_emb
             if self.params['var_type'] == 'iso':
@@ -371,7 +389,13 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
                                                                        num_MC,
                                                                        method,
                                                                        dist_classes)
-                probs_df[i] = np.round(np.array(list(probs.values())),int(np.log10(num_MC)+1))
+                if method == 'mixed':
+                    probs_df_min[i] = np.round(np.array(list(probs[0].values())),int(np.log10(num_MC)+1))
+                    probs_df_gauss[i] = np.round(np.array(list(probs[1].values())),int(np.log10(num_MC)+1))
+                    probs_df_mixed[i] = np.round(np.array(list(probs[2].values())),int(np.log10(num_MC)+1))
+                else:
+                    probs_df[i] = np.round(np.array(list(probs.values())),int(np.log10(num_MC)+1))
+                    
                 mean_embs[:,i] = mean_emb
                 var_embs[:,i] = var_emb
                 
@@ -379,9 +403,29 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
                     logger.info('>>>> {}/{} done... '.format(i+1, len(classes)))
                     
             # Save dataframe to reports (for later use)
-            probs_df.to_csv(file_name_probs)
+            if method == 'mixed':
+                file_name = self._get_test_file_storing_name_(num_NN,num_MC,'min_dist_NN',
+                                                      test_dataset,dist_classes)
+                file_name_probs = f'./reports/probability_distributions/' + file_name + '.csv'
+                probs_df_min.to_csv(file_name_probs)
+                
+                file_name = self._get_test_file_storing_name_(num_NN*10,num_MC,'kNN_gauss_kernel',
+                                                      test_dataset,dist_classes)
+                file_name_probs = f'./reports/probability_distributions/' + file_name + '.csv'
+                probs_df_gauss.to_csv(file_name_probs)
+                
+                file_name = self._get_test_file_storing_name_(num_NN,num_MC,'mixed',
+                                                      test_dataset,dist_classes)
+                file_name_probs = f'./reports/probability_distributions/' + file_name + '.csv'
+                probs_df_mixed.to_csv(file_name_probs)
+                
+                probs_df = probs_df_mixed
+            else:
+                probs_df.to_csv(file_name_probs)
+                
             torch.save(mean_embs, file_name_embs + '_means.pt')
             torch.save(var_embs, file_name_embs + '_vars.pt')
+        
         else:
             logger.info('Loading existing probability distribution')
             probs_df = pd.read_csv(file_name_probs,index_col=0)
@@ -465,6 +509,16 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
                     probs = self._min_dist_NN_(ranks, mean_emb, var_emb, num_NN, num_MC)
                 elif method == 'kNN_gauss_kernel':
                     probs = self._kNN_gauss_kernel_(ranks, mean_emb, var_emb, num_NN, dist_classes)
+                elif method == 'mixed':
+                    probs_min = self._min_dist_NN_(ranks, mean_emb, var_emb, num_NN, num_MC)
+                    probs_gauss = self._kNN_gauss_kernel_(ranks, mean_emb, var_emb, num_NN*10, dist_classes)
+                    
+                    probs_mixed = {key:0 for key in probs_min.keys()}
+                    for key in probs_mixed:
+                        probs_mixed[key] += (probs_min[key]+probs_gauss[key])/2
+                        
+                    probs = (probs_min,probs_gauss,probs_mixed)
+        
                 else:
                     raise ValueError('Method does not exist')
         
@@ -476,7 +530,12 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
             if self.calibration_method == 'MCDropout':
                 self.model.eval_with_dropout()
             
-            probs_swag = {key:0 for key in np.unique(self.classes)}
+            if method == 'mixed':
+                probs_swag_min = {key:0 for key in np.unique(self.classes)}
+                probs_swag_gauss = {key:0 for key in np.unique(self.classes)}
+                probs_swag_mixed = {key:0 for key in np.unique(self.classes)}
+            else:
+                probs_swag = {key:0 for key in np.unique(self.classes)}
 
             for j in range(num_samples):
                 with torch.no_grad():
@@ -514,14 +573,36 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
                     probs = self._kNN_gauss_kernel_(ranks, mean_emb, var_emb, num_NN, dist_classes, 
                                                 means_NN, 
                                                 vars_NN)
+                elif method == 'mixed':
+                    probs_min = self._min_dist_NN_(ranks, mean_emb, var_emb, num_NN, num_MC, 
+                                               means_NN[:,ranks[:num_NN]], 
+                                               vars_NN[:,ranks[:num_NN]])
+                    probs_gauss = self._kNN_gauss_kernel_(ranks, mean_emb, var_emb, num_NN*10, dist_classes, 
+                                                means_NN, 
+                                                vars_NN)
+                    
+                    probs_mixed = {key:0 for key in probs_min.keys()}
+                    for key in probs_mixed:
+                        probs_mixed[key] += (probs_min[key]+probs_gauss[key])/2
+                
                     
                 else:
                     raise ValueError('Method does not exist')
                 
-                for key in probs_swag:
-                    probs_swag[key] += probs[key]/num_samples
-               
-            probs = probs_swag
+                
+                if method == 'mixed':
+                    for key in probs_swag:
+                        probs_swag_min[key] += probs_min[key]/num_samples
+                        probs_swag_gauss[key] += probs_gauss[key]/num_samples
+                        probs_swag_mixed[key] += ((probs_swag_min[key]+probs_gauss[key])/2)/num_samples
+                else:
+                    for key in probs_swag:
+                        probs_swag[key] += probs[key]/num_samples
+             
+            if method == 'mixed':
+                probs = (probs_swag_min,probs_swag_gauss,probs_swag_mixed)
+            else:  
+                probs = probs_swag
         else:
             raise ValueError(f"{self.calibration_method} calibration method is not implemented for this model type")
         
@@ -779,6 +860,15 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
                                 f'withOOD{self.with_OOD}_'+
                                 f'varType-{self.model.var_type}_'+
                                 f'calibrationMethod-{self.calibration_method}')
+                
+        elif (method == 'mixed'):
+            file_name = (f'{self.model_name}_{self.model_data}_'+
+                            f'{self.balanced_classes}_numNN{num_NN}_numMC{num_MC}_'+
+                            f'{dist_classes}_'+
+                            f'{method}_{test_dataset}_'+
+                            f'withOOD{self.with_OOD}_'+
+                            f'varType-{self.model.var_type}_'+
+                            f'calibrationMethod-{self.calibration_method}')
         
         return file_name
     
@@ -912,12 +1002,6 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
         return probs
     
     
-    def calc_exp_to_x_stable(self, x):
-        
-        sum_ = 0
-        for i in range(200):
-            sum_ += x**i/np.math.factorial(i)
-            pdb.set_trace()
             
         
     # --------------------------------------------------------------------------------------------
@@ -975,7 +1059,7 @@ class ImageClassifier_Classic(ImageClassifier):
                          ./models/state_dict respectively, with names {model}.pt and {model}.json)
             model_data (str): TRAIN or TRAINVAL (use either training data or training and val data).
         """
-        super().__init__(model_name, model_type, params, model_data)
+        super().__init__(model_name, model_type, params, model_data,calibration_method)
         self._create_dict_of_class_idxs_()
         all_classes = ['train','cow','tvmonitor','boat','cat','person','aeroplane','bird',
                        'dog','sheep','bicycle','bus','motorbike','bottle','chair',
@@ -983,7 +1067,6 @@ class ImageClassifier_Classic(ImageClassifier):
         output_classes = ([class_ for class_ in all_classes if class_ 
                                     not in self.classes_not_trained_on]) 
         self.output_class_idx = [output_classes.index(class_) for class_ in self.unique_classes]
-        self.calibration_method = calibration_method
         
         if self.calibration_method == 'SWAG':
             if self.model.with_swag == False:

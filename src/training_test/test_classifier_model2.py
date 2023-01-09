@@ -41,7 +41,7 @@ def main(args):
     
     # Define path to images
     path_to_img = './data/raw/JPEGImages/'
-    
+
     # Extract args
     classifier_model = args.model_name
     database_model = args.model_database
@@ -405,9 +405,9 @@ def main(args):
     
      # Extract args
     file_name = f"{classifier_model}_{method}_{calibration_method}_{with_OOD}"
-    with open(f'reports/test_results/{file_name}_metrics_dict.pickle', 'wb') as f:
+    with open(f'reports/test_results_copy/{file_name}_metrics_dict.pickle', 'wb') as f:
         pickle.dump(metrics_dict, f)
-    with open(f'reports/test_results/{file_name}_graphs_dict.pickle', 'wb') as f:
+    with open(f'reports/test_results_copy/{file_name}_graphs_dict.pickle', 'wb') as f:
         pickle.dump(graphs_dict, f)
     
     

@@ -31,8 +31,8 @@ warnings.simplefilter("ignore",SettingWithCopyWarning)
 
 
 def print_PCA_tSNE_plot(data: np.array ,qvars: np.array, classes: list, epoch: int,
-                        varP: float, mode: str, size: int=100, perp: int=15, n_iter: int=2000,
-                        lr: int=200, early_ex: int=10, init: str='pca'):
+                        varP: float, mode: str, size: int=100, perp: int=5, n_iter: int=2000,
+                        lr: int=200, early_ex: int=20, init: str='pca'):
     """This function makes a scatterplot of the embedding space of *data* with pseudo-variances
        *qvars*
        The classes are given by a list and epoch defines the epoch at call-time (for naming).
@@ -60,7 +60,7 @@ def print_PCA_tSNE_plot(data: np.array ,qvars: np.array, classes: list, epoch: i
     df_subset['class'] = classes
     
     max_size = 10*size*2
-    min_size = size/4*2
+    min_size = size/10/2
     df_subset['var_rat'] = qvars/varP
     df_subset['var'] = df_subset['var_rat'].copy()
     min_var =  min(df_subset['var_rat'])
@@ -146,6 +146,9 @@ def print_PCA_tSNE_plot(data: np.array ,qvars: np.array, classes: list, epoch: i
     box = ax.get_position()
     ax.set_position([box.x0, box.y0, box.width * 0.9, box.height])  
     ax.legend(loc='center left', bbox_to_anchor=(1.05, 0.5), ncol=1)
+    
+    ax.get_legend().get_texts()[0].set_text('$\\bf{Class}$')
+    ax.get_legend().get_texts()[19].set_text('\n$\\bf{Type}$')
 
     plt.close()
     
@@ -188,13 +191,16 @@ def print_PCA_tSNE_plot(data: np.array ,qvars: np.array, classes: list, epoch: i
     ax2.set_position([box.x0, box.y0, box.width * 0.9, box.height])  
     ax2.legend(loc='center left', bbox_to_anchor=(1.05, 0.5), ncol=1)
     
+    ax2.get_legend().get_texts()[0].set_text('$\\bf{Class}$')
+    ax2.get_legend().get_texts()[19].set_text('\n$\\bf{Type}$')
+    
     plt.close()
     return fig, fig2
 
 
 def print_tSNE_plot_with_images(data: np.array, objects: list, bbox: list, classes: list, 
-                                img_size: int, path: str, size: float=0.1, perp: int=15, 
-                                n_iter: int=2000, lr: int=200, early_ex: int=10, init: str='pca'):
+                                img_size: int, path: str, size: float=0.1, perp: int=5, 
+                                n_iter: int=2000, lr: int=200, early_ex: int=20, init: str='pca'):
     """This function makes a scatterplot of the embedding space of *data* with pseudo-variances
        *qvars*
        The classes are given by a list and epoch defines the epoch at call-time (for naming).
@@ -304,7 +310,8 @@ def print_tSNE_plot_with_images(data: np.array, objects: list, bbox: list, class
         line = Line2D([0], [0], color=col, label=unique_classes[i], markersize=0,linewidth=3)
         legend_elements.append(line)
     
-    fig.legend(handles=legend_elements, loc='center', bbox_to_anchor=(0.91, 0.55))
+    fig.legend(handles=legend_elements, loc='center', bbox_to_anchor=(0.91, 0.55),
+               title='$\\bf{Class}$')
 
     plt.close()
     
@@ -353,7 +360,8 @@ def print_tSNE_plot_with_images(data: np.array, objects: list, bbox: list, class
         line = Line2D([0], [0], color=col, label=unique_classes[i], markersize=0,linewidth=3)
         legend_elements.append(line)
     
-    fig2.legend(handles=legend_elements, loc='center', bbox_to_anchor=(0.91, 0.55))
+    fig2.legend(handles=legend_elements, loc='center', bbox_to_anchor=(0.91, 0.55),
+                title='$\\bf{Class}$')
 
     plt.close()
     
@@ -455,8 +463,9 @@ def visualize_embedding_space(classifier: ImageClassifier, means: torch.Tensor=N
     
     
     # print embedding space
-    fig_tsne_test, fig_pca_test = print_PCA_tSNE_plot(means,vars,classes,0,
-                                                      classifier.params['var_prior'],'test')
+    var_mean = vars_list.mean()
+    fig_tsne_test, fig_pca_test = print_PCA_tSNE_plot(means,vars,classes,0,var_mean,'test')
+
     return fig_tsne_test, fig_pca_test
 
 
@@ -498,33 +507,53 @@ def calibration_plots(cali_plot_df_acc: pd.DataFrame,
         sizes = size_min + (size_max-size_min)*sizes/100
         sizes = sizes.astype(float)
         
+        with_ood = False
         if (class_=='All (WECE)') or (class_=='Class_mean (AECE)'):
             color = '#008000'
         elif class_[-4:]=='_OOD':
-            color = '#8C000F'
+            color = '#8B4000'
+            with_ood = True
         else:
             color = '#1f77b4'
         x = cali_plot_df_conf[class_]
         y = cali_plot_df_acc[class_]
         std = cali_plot_df_acc[class_]*(1-cali_plot_df_acc[class_])/num_samples_bins[class_]
         std = np.sqrt(std.fillna(100))
-        std[(std==0)&(num_samples_bins[class_]==1)] = 1
+        trust_std = ((num_samples_bins[class_]*cali_plot_df_acc[class_]>5) & 
+                    (num_samples_bins[class_]*(1-cali_plot_df_acc[class_])>5))
 
          # Add reference lines
         x_opt = np.arange(0,1.01,0.01)
         y_opt = np.arange(0,1.01,0.01)
-        ax.plot(x_opt,y_opt, linewidth=1, color='black', linestyle='--', markersize=0)
-        ax.scatter(x,y,marker='o',s=sizes, edgecolors='k', c=color,linewidth=0)
+        ax.plot(x_opt,y_opt, linewidth=1, color='black', linestyle='--', markersize=0,zorder=10)
         if ace_bool == True:
             ax.set_yscale('symlog', linthresh=1e-3)
+            ax.scatter(x,y,marker='o',s=sizes, edgecolors='k', c=color,linewidth=0)
         else:
-            ax.plot(x,y,marker='o', linewidth=1, markersize=0,color=color)
-            ax.fill_between(x.tolist(), np.maximum((y-std).tolist(),0), 
-                        np.minimum((y+std).tolist(),1),alpha=0.5,
+            if sum((trust_std) & (x.isna() == False)) >= 1:
+                ax.scatter(x[(trust_std) & (x.isna() == False)],
+                           y[(trust_std) & (x.isna() == False)],
+                           marker='o',
+                           s=sizes[(trust_std) & (x.isna() == False)],
+                           edgecolors='k', c=color,linewidth=0,zorder=5)
+        
+            if sum((trust_std==False) & (x.isna() == False)) >= 1:
+                ax.scatter(x[(trust_std==False) & (x.isna() == False)],
+                           y[(trust_std==False) & (x.isna() == False)],
+                           marker='o',
+                           s=sizes[(trust_std==False) & (x.isna() == False)], 
+                           edgecolors='r', c=color,linewidth=0,zorder=5)
+
+            ax.plot(x,y,marker='o', linewidth=1, markersize=0,color=color,zorder=1)
+            
+            
+            ax.fill_between(x.tolist(), np.maximum((y-1.96*std).tolist(),0), 
+                        np.minimum((y+1.96*std).tolist(),1),alpha=0.5,
                         edgecolor=color,facecolor=color,linestyle='-')
     
         # reference line, legends, and axis labels
         ax.set_title(f'{class_}',fontsize=15)
+
 
     fig.supxlabel('Predicted probability',fontsize=20, y=0.03)
     fig.supylabel('True probability in each bin',fontsize=20, x=0.03)
@@ -545,21 +574,38 @@ def calibration_plots(cali_plot_df_acc: pd.DataFrame,
                                         markeredgewidth=0.5)]
     if ace_bool == False:
         plt.subplots_adjust(left=0.1, right=0.82, top=0.9, bottom=0.1)
-        fig.legend(handles=legend_elements, loc='center', bbox_to_anchor=(0.91, 0.55))
+        fig.legend(handles=legend_elements, loc='center', bbox_to_anchor=(0.91, 0.66),
+               title="$\\bf{Samples\,\,in\,\,bin}$",fontsize=13,title_fontsize=15)
     
     # Add legend for coloring
     legend_elements2 = [Line2D([0], [0], marker='', color='#1f77b4', label='Classes ID',
                                         markerfacecolor='#1f77b4', markersize=0,linewidth=1,
                                         markeredgewidth=0),
-                       Line2D([0], [0], marker='', color='#8C000F', label='Classes OOD',
+                       Line2D([0], [0], marker='', color='#8B4000', label='Classes OOD',
                                         markersize=0,linewidth=1,markeredgewidth=0),
                        Line2D([0], [0], marker='', color='#008000', label='Classes combined',
                                         markersize=0,linewidth=1,markeredgewidth=0)]
 
     if ace_bool == False:
-        legend2 = fig.legend(legend_elements2,['Classes ID','Classes OOD','Classes combined'], 
-                         loc='center', bbox_to_anchor=(0.91, 0.45))
+        legend_labels = ['Classes ID','Classes OOD','Classes combined']
+        if with_ood == False:
+            legend_elements2 = [legend_elements2[0]]+[legend_elements2[2]]
+            legend_labels = ['Classes ID','Classes combined']
+            
+        legend2 = fig.legend(legend_elements2,legend_labels, 
+                         loc='center', bbox_to_anchor=(0.91, 0.5),
+               title="$\\bf{Type}$",fontsize=13,title_fontsize=15)
         fig.add_artist(legend2)
+        
+        
+        legend_elements3 = [Line2D([0], [0], marker='o', color='k', label='Trusted',
+                                            markerfacecolor='#1f77b4', markersize=10,linewidth=0,
+                                            markeredgewidth=0),
+                            Line2D([0], [0], marker='o', color='r', label='Not trusted',
+                                            markerfacecolor='#1f77b4', markersize=10,linewidth=0,
+                                            markeredgewidth=1)]
+        fig.legend(handles=legend_elements3, loc='center', bbox_to_anchor=(0.91, 0.34),
+                title="$\\bf{Trust\,\,errorbar}$",fontsize=13,title_fontsize=15)
     
     return fig
 
@@ -711,7 +757,9 @@ def visualize_embedding_space_with_images(classifier: ImageClassifier, means: to
     count = 0
     for class_ in classes_unique:
         class_idxs = np.where(classes_list == class_)[0]
-        rand_idx_of_class = np.random.choice(class_idxs,num_classes_samples)
+        small_var=vars_list.mean(axis=0).squeeze()[class_idxs].argsort()
+        class_idxs = class_idxs[small_var]
+        rand_idx_of_class = class_idxs[:num_classes_samples]
         for idx in rand_idx_of_class:
             means[:,count] = means_list[:,idx]
             classes.append(classes_list[idx])
@@ -727,3 +775,114 @@ def visualize_embedding_space_with_images(classifier: ImageClassifier, means: to
     return fig1, fig2
 
 
+def UCE_plots_classewise(cali_plot_df_acc: pd.DataFrame,
+                         cali_plot_df_conf: pd.DataFrame,
+                         num_samples_bins: pd.DataFrame):
+    
+    num_classes = len(cali_plot_df_acc.columns)
+    
+    fig, axes = plt.subplots(nrows=int(num_classes/5)+1,ncols=5, figsize=(16,12),
+                             sharex=True, sharey=True)
+    
+    size_min = 1
+    size_max = 100
+    # only these two lines are calibration curves
+    with_ood = False
+    for i, class_ in enumerate(cali_plot_df_acc.columns):
+        ax = axes.flatten()[i]
+        # get sizes 
+        sizes = num_samples_bins[class_]
+        sizes[sizes>100] = 100
+        sizes = size_min + (size_max-size_min)*sizes/100
+        sizes = sizes.astype(float)
+        
+        if class_=='Combined':
+            color = '#008000'
+        elif class_[-4:]=='_OOD':
+            color = '#8B4000'
+            with_ood = True
+        else:
+            color = '#1f77b4'
+        x = cali_plot_df_conf[class_]
+        y = cali_plot_df_acc[class_]
+        std = cali_plot_df_acc[class_]*(1-cali_plot_df_acc[class_])/num_samples_bins[class_]
+        std = np.sqrt(std.fillna(100))
+        trust_std = ((num_samples_bins[class_]*cali_plot_df_acc[class_]>5) & 
+                    (num_samples_bins[class_]*(1-cali_plot_df_acc[class_])>5))
+
+         # Add reference lines
+        x_opt = np.arange(0,1.01,0.01)
+        y_opt = (num_classes-2)/(num_classes-1)*x_opt
+        ax.plot(x_opt,y_opt, linewidth=1, color='black', linestyle='--', markersize=0,zorder=10)
+        ax.plot(x,y,marker='o', linewidth=1.5, markersize=0,color=color,zorder=1)
+        if sum((trust_std) & (x.isna() == False)) >= 1:
+            ax.scatter(x[(trust_std) & (x.isna() == False)],
+                       y[(trust_std) & (x.isna() == False)],
+                       marker='o',
+                       s=sizes[(trust_std) & (x.isna() == False)],
+                       edgecolors='k', c=color,linewidth=0,zorder=5)
+        
+        if sum((trust_std==False) & (x.isna() == False)) >= 1:
+            ax.scatter(x[(trust_std==False) & (x.isna() == False)],
+                       y[(trust_std==False) & (x.isna() == False)],
+                       marker='o',
+                       s=sizes[(trust_std==False) & (x.isna() == False)], 
+                       edgecolors='r', c=color,linewidth=1,zorder=5)
+            
+        ax.fill_between(x.tolist(), np.maximum((y-1.96*std).tolist(),0), 
+                        np.minimum((y+1.96*std).tolist(),1),alpha=0.5,
+                        edgecolor=color,facecolor=color,linestyle='-')
+        
+    
+        # reference line, legends, and axis labels
+        ax.set_title(f'{class_}',fontsize=15)
+
+    fig.supxlabel('Uncertainty',fontsize=20, y=0.03)
+    fig.supylabel('True error in each bin',fontsize=20, x=0.03)
+    
+    fig.suptitle('Uncertainty plots for each class',fontsize=20, y=0.96)
+    
+    legend_elements = [Line2D([0], [0], marker='o', color='k', label='#Samples = 1',
+                                        markerfacecolor='#1f77b4', markersize=1,linewidth=0,
+                                        markeredgewidth=0.5),
+                       Line2D([0], [0], marker='o', color='k', label='#Samples = 50',
+                                        markerfacecolor='#1f77b4', markersize=5,linewidth=0,
+                                        markeredgewidth=0.5),
+                       Line2D([0], [0], marker='o', color='k', label='#Samples > 100',
+                                        markerfacecolor='#1f77b4', markersize=10,linewidth=0,
+                                        markeredgewidth=0.5)]
+    plt.subplots_adjust(left=0.1, right=0.82, top=0.9, bottom=0.1)
+    fig.legend(handles=legend_elements, loc='center', bbox_to_anchor=(0.91, 0.66),
+               title="$\\bf{Samples\,\,in\,\,bin}$",fontsize=13,title_fontsize=15)
+    
+    # Add legend for coloring
+    legend_elements2 = [Line2D([0], [0], marker='', color='#1f77b4', label='Classes ID',
+                                        markerfacecolor='#1f77b4', markersize=0,linewidth=1.5,
+                                        markeredgewidth=0),
+                       Line2D([0], [0], marker='', color='#8B4000', label='Classes OOD',
+                                        markersize=0,linewidth=1.5,markeredgewidth=0),
+                       Line2D([0], [0], marker='', color='#008000', label='Classes combined',
+                                        markersize=0,linewidth=1.5,markeredgewidth=0)]
+    
+    legend_labels = ['Classes ID','Classes OOD','Classes combined']
+    if with_ood == False:
+        legend_elements2 = [legend_elements2[0]]+[legend_elements2[2]]
+        legend_labels = ['Classes ID','Classes combined']
+
+    legend2 = fig.legend(legend_elements2,legend_labels, 
+                         loc='center', bbox_to_anchor=(0.91, 0.5),
+               title="$\\bf{Type}$",fontsize=13,title_fontsize=15)
+    fig.add_artist(legend2)
+    
+    
+    legend_elements3 = [Line2D([0], [0], marker='o', color='k', label='Trusted',
+                                        markerfacecolor='#1f77b4', markersize=10,linewidth=0,
+                                        markeredgewidth=0),
+                        Line2D([0], [0], marker='o', color='r', label='Not trusted',
+                                        markerfacecolor='#1f77b4', markersize=10,linewidth=0,
+                                        markeredgewidth=1)]
+    fig.legend(handles=legend_elements3, loc='center', bbox_to_anchor=(0.91, 0.34),
+               title="$\\bf{Trust\,\,errorbar}$",fontsize=13,title_fontsize=15)
+    
+    
+    return fig

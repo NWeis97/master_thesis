@@ -235,7 +235,7 @@ def main(config):
                         "model": dict(model_conf),
                         "img_conf": dict(img_conf),
                         "dataset_conf": dict(dataset_conf)},
-                job_type="Train"
+                job_type="Tune"
         )
     
     # Get wandb name
@@ -594,7 +594,7 @@ def main(config):
         if ((i+1)%save_model_freq == 0) | (i == num_epochs-1):
             logger.info('Saving the model')
             torch.save(net.state_dict(),f'./models/state_dicts/{wandb_run_name}.pt')
-            wandb.save(f'./models/state_dicts/{wandb_run_name}.pt', policy="now")
+            wandb.save(f'./models/tmp_models/{wandb_run_name}.pt', policy="now")
             
             
         # *********************************
@@ -612,7 +612,7 @@ def main(config):
         # ******** Save SWAG Init weights ************
         # ********************************************
         if params['with_swag'] == True:
-            if i+1 == int(num_epochs*4/7):
+            if i+1 == int(np.ceil(num_epochs*1/2)):
                 
                 base_params = net.features.parameters()
                 head_params = [i for i in net.parameters() if i not in base_params]
@@ -625,7 +625,7 @@ def main(config):
                         else:
                             swag_init_var_param.append(param.data.clone())
 
-                lr_swag = lr_optim
+                lr_end_swag = lr_optim
             
             
 
@@ -641,6 +641,9 @@ def main(config):
         head_params_var__var = [] # Var of var head
         logger.info(f'>> Extracting param values for SWAG')
         
+        #Reset lr
+        lr_init_swag = (lr_init+lr_end_swag)/2
+        lr_frac_swag = (lr_end_swag/lr_init_swag)**(1/(num_train_per_update*2-1))
         
         #Reset weights to swag init
         count_mean = 0
@@ -654,11 +657,10 @@ def main(config):
                     param.data = swag_init_var_param[count_var]
                     count_var += 1
     
-    
-        # Extract SWAG weights (run for same total number of epochs as original)
-        num_swag_epochs = int(num_epochs-int(num_epochs*4/7))
-        for j in range(num_swag_epochs):
-            if True:
+        # Extract SWAG weights
+        for j in range(20):
+            # Only save model weights every two epochs
+            if ((j+1) % 2 == 0) | (j == 0):
                 base_params = net.features.parameters()
                 head_params = [i for i in net.parameters() if i not in base_params]
                 tmp_mean_param = []
@@ -674,11 +676,12 @@ def main(config):
         
             # train model
             for k in range(num_train_per_update):
+                lr_optim = lr_init_swag*(lr_frac_swag**(k+k*j%2))
                 
                 optim = AdamW([
                             {'params': head_params},
-                            {'params': base_params, 'lr': lr_swag*0.01}, 
-                        ],lr=lr_swag, weight_decay=1e-1,)
+                            {'params': base_params, 'lr': lr_optim*0.01}, 
+                        ],lr=lr_optim, weight_decay=1e-1,)
                 
                 
                 # Make new tuples
@@ -691,8 +694,9 @@ def main(config):
                 train(train_loader,net,criterion,optim,j,k, update_every, print_freq,clip)
             
             
-            logger.info(f'>>>>> {j+1}/{num_swag_epochs}')
-            train_loader.dataset.update_backbone_repr_pool(net)
+            logger.info(f'>>>>> {j+1}/{20}')
+            if (j+1 != 20):
+                train_loader.dataset.update_backbone_repr_pool(net)
                 
                 
                 
@@ -735,36 +739,6 @@ def main(config):
         net.head_std__mean = head_params_var__mean
         net.head_std__var = head_params_var__var
         
-        logger.info('Resetting batch norm running stats')
-        net.reset_batchnorm_running_stats()
-        
-        logger.info('Set params to mean')
-        net.set_params_to_mean()
-        
-        logger.info('Calculating new running stats with mean SWAG params')
-        # train model
-        for k in range(num_train_per_update):
-            
-            optim = AdamW([
-                        {'params': head_params},
-                        {'params': base_params, 'lr': 0*0.01}, 
-                    ],lr=0, weight_decay=1e-1,)
-            
-            
-            # Make new tuples
-            (avg_neg_distance_train,
-                qvecs_train,
-                qvars_train,
-                classes_train) = train_loader.dataset.create_epoch_tuples(net,neg_class_max,
-                                                                skip_closest_neg_prob)
-            # Train on tuples
-            train(train_loader,net,criterion,optim,-1,k, update_every, print_freq,clip)
-        
-        
-        
-        logger.info('Saving SWAG model')
-        torch.save(net.state_dict(),f'./models/state_dicts_swag/{wandb_run_name}.pt')
-        wandb.save(f'./models/state_dicts_swag/{wandb_run_name}_SWAG.pt', policy="now")
         logger.info('Saving SWAG headers')
         torch.save(net.head_mean__mean,f'./models/swag_headers/{wandb_run_name}_mean_swag__mean.pt')
         torch.save(net.head_mean__var,f'./models/swag_headers/{wandb_run_name}_mean_swag__var.pt')

@@ -1,10 +1,10 @@
 #!/bin/bash
-export R=_BTM_collaps_too_large_kl_contribution
+export R=_BTM_collaps_too_large_variance
 ### NAME OF FILE
-#BSUB -J config_BTM_collaps_too_large_kl_contribution
+#BSUB -J config_BTM_collaps_too_large_variance
 ### OUTPUT AND ERROR FILE
-#BSUB -o config_hpc/config_BTM_collaps_too_large_kl_contribution.out
-#BSUB -e config_hpc/config_BTM_collaps_too_large_kl_contribution.err
+#BSUB -o config_hpc/config_BTM_collaps_too_large_variance.out
+#BSUB -e config_hpc/config_BTM_collaps_too_large_variance.err
 ### QUEUE TO BE USED
 #BSUB -q gpuv100
 ### gpu memory

@@ -73,10 +73,12 @@ def main():
     
     
     # Load pickle file and store in dataframe
+    #'./reports/test_results_iso_large_var_prior/'
+    folder = './reports/test_results/'
     len_interp = 401
-    files = [f for f in listdir("./reports/test_results/") if isfile(join("./reports/test_results/", f))]
+    files = [f for f in listdir(f"{folder}") if isfile(join(f"{folder}", f))]
     for file in files:
-        with open("./reports/test_results/"+file, 'rb') as handle:
+        with open(f"{folder}"+file, 'rb') as handle:
             b = pickle.load(handle)
             if file.split("_")[-2] == 'metrics':
                 metrics_data = pd.concat([metrics_data,pd.DataFrame([b])],axis=0)
@@ -214,7 +216,7 @@ def main():
                 
                 
     print(metrics_data.groupby(['Model Type','Method','Calibration Method','With_OOD']).count())
-
+   
 
 
     # ! --------------------------- METRICS MEANS AND STDS ---------------------------------

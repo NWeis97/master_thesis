@@ -16,6 +16,7 @@ from src.models.image_classifier import ImageClassifier, init_classifier_model
 from src.visualization.visualize import (image_object_full_bbox_resize_class,
                                          precision_recall_plots,
                                          calibration_plots,
+                                         UCE_plots_classewise,
                                          visualize_metric_dist_per_class)
 from src.utils.helper_functions_test import (get_idxs_of_true_and_false_classifications,
                                              sort_idx_on_metric_per_class)
@@ -152,7 +153,10 @@ def main(args):
     
     # Get UCE
     (UCE, UCE_fig, UCE_df, 
-     uncertainties) = get_UCE(probs_df, true_classes,len(classifier.unique_classes))
+     uncertainties,
+     uncert_class_df_uncert,
+     uncert_class_df_error, 
+     uncert_class_df_count) = get_UCE(probs_df, true_classes,len(classifier.unique_classes))
     
     # Get AvU
     (AvU_simple_thresh, simple_thresh, AvU_simple_df, 
@@ -197,6 +201,9 @@ def main(args):
     cali_plots = calibration_plots(cali_plot_df_acc,cali_plot_df_conf,num_each_bin_df, False)
     cali_plots_ace = calibration_plots(ACE_acc_df, ACE_conf_df, ACE_num_each_bin, True)
     
+    # Make uncertainty plots plots
+    uncert_plots = UCE_plots_classewise(uncert_class_df_error, uncert_class_df_uncert, 
+                                        uncert_class_df_count)
     
     # Create precision/recall plots
     fig_aP = precision_recall_plots(aP_plotting, aP_df)
@@ -363,7 +370,8 @@ def main(args):
                                                             class_names=classifier.unique_classes)})
     
     # Log illustration of embedding space with classes and other figures
-    wandb.log({'Calibration plots': wandb.Image(cali_plots),
+    wandb.log({'Uncertainty plots': wandb.Image(uncert_plots),
+               'Calibration plots': wandb.Image(cali_plots),
                'Calibration plots (ACE)': wandb.Image(cali_plots_ace),
                'Uncertainty calibration plots': wandb.Image(UCE_fig),
                'Distribution over uncertainties': wandb.Image(fig_uncertainties),
