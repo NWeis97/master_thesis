@@ -4,6 +4,7 @@ import logging
 import os
 import configparser
 import warnings
+import cv2
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
 warnings.simplefilter("ignore", UserWarning)
@@ -185,3 +186,8 @@ def get_logger_test(name: str):
     
     return logger
 
+
+def variance_of_laplacian(image):
+    # compute the Laplacian of the image and then return the focus
+	# measure, which is simply the variance of the Laplacian
+	return cv2.Laplacian(image, cv2.CV_64F).var()

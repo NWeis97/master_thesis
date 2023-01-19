@@ -425,3 +425,16 @@ def get_entropies(probs_df: pd.DataFrame):
         
     return entropies
     
+    
+def Hellinger_distance(ID_samples,
+                           OOD_samples):
+    buckets = np.arange(0.0,3,0.01)
+    sum_ = 0
+    for i in range(len(buckets)-1):
+        min_ = buckets[i]
+        max_ = buckets[i+1]
+        ID_samples_in_bucket_freq = np.mean((ID_samples>=min_)&(ID_samples<max_))
+        OOD_samples_in_bucket_freq = np.mean((OOD_samples>=min_)&(OOD_samples<max_))
+        sum_ += np.sqrt(ID_samples_in_bucket_freq*OOD_samples_in_bucket_freq)
+    
+    return np.sqrt(np.max([1-sum_,0]))

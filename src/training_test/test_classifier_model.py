@@ -19,7 +19,8 @@ from src.visualization.visualize import (visualize_embedding_space_with_images,
                                          calibration_plots,
                                          UCE_plots_classewise,
                                          visualize_metric_dist_per_class,
-                                         visualize_embedding_space)
+                                         visualize_embedding_space,
+                                         uncert_var_blur_pred_plot)
 from src.utils.helper_functions_test import (get_idxs_of_true_and_false_classifications,
                                              sort_idx_on_metric_per_class)
 from src.utils.performance_measures import (confidence_vs_accuracy,
@@ -41,7 +42,7 @@ def main(args):
     
     # Define path to images
     path_to_img = './data/raw/JPEGImages/'
-    
+
     # Extract args
     classifier_model = args.model_name
     database_model = args.model_database
@@ -234,7 +235,7 @@ def main(args):
                                         uncert_class_df_count)
     
     # Make illustrations of embedding space with classes
-    means, vars = classifier.get_embeddings_of_test_dataset(test_dataset)
+    means, vars, blurriness = classifier.get_embeddings_of_test_dataset(test_dataset)
     if with_OOD == False:
         means = means[:,ID_true_classes_idx]
         vars = vars[:,ID_true_classes_idx]
@@ -246,7 +247,17 @@ def main(args):
     
     # Create precision/recall plots
     fig_aP = precision_recall_plots(aP_plotting, aP_df)
-    
+
+    # Make Blurriness/variance/uncertainty/pred plot
+    if blurriness is not None:
+        blurriness = blurriness.cpu().numpy().squeeze()
+        if with_OOD == False: 
+            blurriness = blurriness[ID_true_classes_idx]
+        variance = vars.mean(axis=0).cpu().numpy().squeeze()
+        preds = list(probs_df.idxmax()==true_classes)
+        uncert_var_blur_pred_fig = uncert_var_blur_pred_plot(blurriness, variance, preds, uncertainties)
+    else:
+        uncert_var_blur_pred_fig = uncert_plots
     
     #********* Exctract examples of images with low and high variance *********#
     
@@ -453,7 +464,8 @@ def main(args):
                'Uncertainty calibration plots': wandb.Image(UCE_fig),
                'Distribution over variances': wandb.Image(fig_vars),
                'Distribution over uncertainties': wandb.Image(fig_uncertainties),
-               'Preicison/recall plots': wandb.Image(fig_aP)})
+               'Preicison/recall plots': wandb.Image(fig_aP),
+               'Uncertainty vs. Variance vs. Blurriness':wandb.Image(uncert_var_blur_pred_fig)})
     
     # Log images with low and high variances   
     for class_ in dict_vars:

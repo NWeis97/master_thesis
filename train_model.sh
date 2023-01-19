@@ -1,10 +1,10 @@
 #!/bin/bash
-export R=_BTM_collaps_too_large_variance
+export R=_BTM_iso_train
 ### NAME OF FILE
-#BSUB -J config_BTM_collaps_too_large_variance
+#BSUB -J config_BTM_iso_train
 ### OUTPUT AND ERROR FILE
-#BSUB -o config_hpc/config_BTM_collaps_too_large_variance.out
-#BSUB -e config_hpc/config_BTM_collaps_too_large_variance.err
+#BSUB -o config_hpc/config_BTM_iso_train.out
+#BSUB -e config_hpc/config_BTM_iso_train.err
 ### QUEUE TO BE USED
 #BSUB -q gpuv100
 ### gpu memory

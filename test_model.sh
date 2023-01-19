@@ -1,14 +1,13 @@
 #!/bin/bash
 ### Settings for test run
 export R=1
-export model_name=noble-mountain-2690
+export model_name=avid-donkey-2914 #glamorous-puddle-3137
 export model_database=TRAINVAL
-export balanced_dataset=50
+export balanced_dataset=-1350
 export test_dataset=test
-export num_NN=1351
+export num_NN=675
 export num_MC=3000
-export num_NN_kNN=6751
-export method=kNN_gauss_kernel
+export method=min_dist_NN
 export with_OOD=False
 export dist_classes=nn
 export calibration_method=SWAG
@@ -48,6 +47,5 @@ rm config_hpc/config_test${R}.out
 rm config_hpc/config_test${R}.err
 source init.sh
 
-#python3 src/training_test/test_classifier_model2.py --model-name=${model_name} --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN} --num-MC=${num_MC} --method='mixed' --with_OOD=${with_OOD} --dist_classes=${dist_classes} --calibration_method=${calibration_method}
-python3 src/training_test/test_classifier_model2.py --model-name=${model_name} --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN} --num-MC=${num_MC} --method='min_dist_NN' --with_OOD=${with_OOD} --dist_classes=${dist_classes} --calibration_method=${calibration_method}
-#python3 src/training_test/test_classifier_model2.py --model-name=${model_name} --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN_kNN} --num-MC=${num_MC} --method='kNN_gauss_kernel' --with_OOD=${with_OOD} --dist_classes=${dist_classes} --calibration_method=${calibration_method}
+python3 src/training_test/test_classifier_model3.py --model-name=${model_name} --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN} --num-MC=${num_MC} --method=${method} --with_OOD=${with_OOD} --dist_classes=${dist_classes} --calibration_method=${calibration_method}
+#python3 src/training_test/test_classifier_model.py --model-name=${model_name} --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN} --num-MC=${num_MC} --method='min_dist_NN' --with_OOD=${with_OOD} --dist_classes=${dist_classes} --calibration_method=${calibration_method}

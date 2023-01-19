@@ -1,14 +1,14 @@
 # Imports
 import numpy as np
 import pandas as pd
-
+import pdb
 
 def _get_entropy_unnormalized_(probs):
-    ei = np.abs(-np.sum(probs*np.log(probs)))
+    ei = np.abs(-np.sum(probs*np.log(probs+1e-18)))
     return ei
 
 def _get_entropy_(probs,num_classes):
-    ui = np.abs(-np.sum(probs*np.log(probs))/np.log(num_classes))
+    ui = np.abs(-np.sum(probs*np.log(probs+1e-18))/np.log(num_classes))
     return ui
 
 def _get_uncertainties_(probs_df: pd.DataFrame,

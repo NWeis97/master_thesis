@@ -1,10 +1,10 @@
 #!/bin/bash
-export R=_Vanilla
+export R=_Vanilla_new_OODs
 ### NAME OF FILE
-#BSUB -J config_Vanilla
+#BSUB -J config_Vanilla_new_OODs
 ### OUTPUT AND ERROR FILE
-#BSUB -o config_hpc/config_Vanilla.out
-#BSUB -e config_hpc/config_Vanilla.err
+#BSUB -o config_hpc/config_Vanilla_new_OODs.out
+#BSUB -e config_hpc/config_Vanilla_new_OODs.err
 ### QUEUE TO BE USED
 #BSUB -q gpuv100
 ### gpu memory

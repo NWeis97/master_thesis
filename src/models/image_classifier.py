@@ -10,10 +10,11 @@ from src.models.image_classification_network import init_network
 import pdb
 from os.path import exists
 import multiprocessing
+import cv2
 
 # Load own libs
 from src.loaders.generic_loader import ObjectsFromList, image_object_loader
-from src.utils.helper_functions import get_logger_test
+from src.utils.helper_functions import get_logger_test, variance_of_laplacian
 
 logger = get_logger_test('__main__')
 
@@ -284,7 +285,7 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
             torch.save(self.vars,file_name+'vars.pt')
             torch.save(self.classes,file_name+'classes.pt')
         else:
-            if ((self.calibration_method == 'SWAG') | (self.calibration_method == 'MCDropout')):
+            if False:#((self.calibration_method == 'SWAG') | (self.calibration_method == 'MCDropout')):
                 logger.info('SWAG and MCDropout calibration need backbone representations... Loading them first')
                 self.means, self.vars, self.backbone_repr, self.classes = self._extract_means_and_variances_()
             
@@ -320,7 +321,8 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
                                            num_NN: int = 100, 
                                            num_MC: int = 10000,
                                            method: str = 'min_dist_NN',
-                                           dist_classes: str = 'unif'):
+                                           dist_classes: str = 'unif',
+                                           temp: float = None):
         """Calculates the probability distributiuon over classes trained on for a set of images
            defined by 'test_dataset'. Name of 'test_dataset' should be present in data/processed/.
 
@@ -379,11 +381,12 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
                 
             mean_embs = torch.zeros(mean_dim, len(classes)).cuda()
             var_embs = torch.zeros(var_dim,len(classes)).cuda()
+            blurriness = torch.zeros(len(classes)).cuda()
             
             torch.manual_seed(self.params['seed'])
             self.rnd_states = torch.randperm(100000000)[:100]
             for i in range(len(classes)):
-                probs, mean_emb, var_emb = self._get_probability_dist_(objects[i],
+                probs, mean_emb, var_emb, blurry = self._get_probability_dist_(objects[i],
                                                                        bboxs[i],
                                                                        num_NN,
                                                                        num_MC,
@@ -398,6 +401,7 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
                     
                 mean_embs[:,i] = mean_emb
                 var_embs[:,i] = var_emb
+                blurriness[i] = blurry
                 
                 if (i+1) % 100 == 0:
                     logger.info('>>>> {}/{} done... '.format(i+1, len(classes)))
@@ -425,12 +429,13 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
                 
             torch.save(mean_embs, file_name_embs + '_means.pt')
             torch.save(var_embs, file_name_embs + '_vars.pt')
+            torch.save(blurriness, file_name_embs + '_blurriness.pt')
         
         else:
             logger.info('Loading existing probability distribution')
             probs_df = pd.read_csv(file_name_probs,index_col=0)
         
-        return probs_df, objects, bboxs, classes  
+        return probs_df, objects, bboxs, classes
     
     def get_embeddings_of_test_dataset(self, test_dataset):
         
@@ -439,11 +444,15 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
         if exists(file_name_embs + '_means.pt'):
             means = torch.load(file_name_embs + '_means.pt')
             vars = torch.load(file_name_embs + '_vars.pt')
+            try:
+                blurriness = torch.load(file_name_embs + '_blurriness.pt')
+            except:
+                blurriness = None
         else:
             raise RuntimeError('You have to call "get_probability_dist_dataset" before you can get'+
                                ' embeddings!')
     
-        return means, vars
+        return means, vars, blurriness
  
  
     # --------------------------------------------------------------------------------------------
@@ -467,13 +476,22 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
         else:
             var_dim = int(self.params['dim_out']/2)
             
+        # get blurriness
+        transformer2 = transforms.Compose([
+                        transforms.Resize((int(self.params['img_size']),int(self.params['img_size']))),
+                        transforms.PILToTensor(),
+                        transforms.ConvertImageDtype(torch.float)])
+        img2 = image_object_loader(img_path,bbox,transformer2)
+        gray = cv2.cvtColor(np.swapaxes(np.swapaxes(img2.numpy().squeeze(),0,1),1,2), cv2.COLOR_BGR2GRAY)
+        blurry = variance_of_laplacian(gray.astype('float64')*255)
+            
         with torch.no_grad():
             backbone_emb = self.model.forward_backbone(img.cuda())
             output = self.model.forward_head(backbone_emb).data.squeeze()
             mean_emb = output[:-var_dim]
             var_emb = output[-var_dim:]
         
-        return mean_emb, var_emb, backbone_emb
+        return mean_emb, var_emb, backbone_emb, blurry
 
     def _get_probability_dist_(self, img_name: str, 
                                    bbox: list, 
@@ -498,15 +516,16 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
         """
         
         # Get embeddings
-        mean_emb, var_emb, backbone_emb = self._get_embedding_(img_name,bbox)
+        mean_emb, var_emb, backbone_emb, blurriness = self._get_embedding_(img_name,bbox)
         
-        if self.calibration_method == 'None':
+        if (self.calibration_method == 'None') | (self.calibration_method == 'TempScaling'):
             with torch.no_grad():
                 dist = (torch.pow(self.means-mean_emb[None,:].T+1e-6, 2).sum(dim=0).sqrt())
                 _, ranks = torch.sort(dist, dim=0, descending=False)
                 
                 if method == 'min_dist_NN':    
-                    probs = self._min_dist_NN_(ranks, mean_emb, var_emb, num_NN, num_MC)
+                    probs = self._min_dist_NN_test_stability_(ranks, mean_emb, var_emb, num_NN, num_MC)
+                    #probs = self._min_dist_NN_(ranks, mean_emb, var_emb, num_NN, num_MC)
                 elif method == 'kNN_gauss_kernel':
                     probs = self._kNN_gauss_kernel_(ranks, mean_emb, var_emb, num_NN, dist_classes)
                 elif method == 'mixed':
@@ -613,7 +632,7 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
         if self.calibration_method == 'MCDropout':
             self.model.eval()
             
-        return probs, mean_emb, var_emb
+        return probs, mean_emb, var_emb, blurriness
     
     def _extract_means_and_variances_(self): 
         OFL = ObjectsFromList(root=self.ims_root, 
@@ -922,7 +941,24 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
         for i in range(len(counts)):
             probs[classes_NN[indx_class[i].item()]]+=counts[i].item()
         
+        if self.calibration_method == 'TempScaling':
+            get_ID_idx = ['_OOD' not in self.classes[i] for i in range(len(self.classes))]
+            if self.params['var_type'] == 'iso':
+                temp = self.vars[:,get_ID_idx].mean(axis=0).quantile(0.600)
+            else:
+                temp = self.vars[:,get_ID_idx].mean(axis=0).quantile(0.550)
+            probs_w = np.array([probs[i] for i in probs.keys()])
+            probs_w = np.log(probs_w+1e-4)
+            probs_w = probs_w/(var_emb.mean()/temp).cpu().numpy()
+            probs_w = torch.softmax(torch.Tensor(probs_w),axis=0)
+            
+            probs = {key:0 for key in np.unique(self.classes)}
+            for i,key in enumerate(probs.keys()):
+                probs[key] = probs_w[i].item()
+            
         return probs 
+    
+    
        
     def _kNN_gauss_kernel_(self, ranks, mean_emb, var_emb, num_NN, dist_classes = 'all', means_NN=None, vars_NN=None):
         if means_NN is None:
@@ -974,11 +1010,9 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
         
         # Calculate all Gaussian Kernels
         D = self.means.shape[0]
-        if self.means.shape[0] > self.vars.shape[0]:
-            tr_var = var_emb
-        else:
-            tr_var = torch.mean(var_emb)
-        f_Bayes = torch.exp(-expected_dist/(2*tr_var))    
+        cov_per_dim = vars_per_dim**2*(2+4*torch.pow(vars_per_dim,-1)*means_per_dim_sub)
+        cov = cov_per_dim.sum(axis=1)
+        f_Bayes = torch.exp(-expected_dist/(2*cov))    
         
         # Accumulate on class level per sample
         classes, idx = np.unique(classes_NN, return_inverse=True)
@@ -999,6 +1033,21 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
             else:
                 probs[class_]=1/self.num_classes
             
+        if self.calibration_method == 'TempScaling':
+            get_ID_idx = ['_OOD' not in self.classes[i] for i in range(len(self.classes))]
+            if self.params['var_type'] == 'iso':
+                temp = self.vars[:,get_ID_idx].mean(axis=0).quantile(0.625)
+            else:
+                temp = self.vars[:,get_ID_idx].mean(axis=0).quantile(0.600)
+            probs_w = np.array([probs[i] for i in probs.keys()])
+            probs_w = np.log(probs_w+1e-4)
+            probs_w = probs_w/(var_emb.mean()/temp).cpu().numpy()
+            probs_w = torch.softmax(torch.Tensor(probs_w),axis=0)
+            
+            probs = {key:0 for key in np.unique(self.classes)}
+            for i,key in enumerate(probs.keys()):
+                probs[key] = probs_w[i].item()
+        
         return probs
     
     
@@ -1045,6 +1094,87 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
         return t_dist_1-t_dist_0, t_gaus_1-t_gaus_0
     
     
+    def _min_dist_NN_test_stability_(self, ranks, mean_emb, var_emb, num_NN, num_MC, means_NN=None, vars_NN=None):
+        # extract num_NN nearest neighbours
+        ranks = ranks[:num_NN]
+        # Extract means, variance, and classes
+        if means_NN is None:
+            means_NN = self.means[:,ranks].cuda()
+            vars_NN = self.vars[:,ranks].cuda()
+        classes_NN = [self.classes[i] for i in ranks]
+        
+        if self.model.var_type == 'iso':
+            vars_NN = (torch.Tensor.repeat(vars_NN.flatten(),mean_emb.shape[0])
+                                   .reshape(mean_emb.shape[0],-1))
+            var_emb = (torch.Tensor.repeat(var_emb.flatten(),mean_emb.shape[0])
+                                   .reshape(mean_emb.shape[0],))
+        
+        emb_samples = torch.distributions.Normal(mean_emb,var_emb).rsample(torch.Size((num_MC,)))
+        rank_samples = (torch.distributions.Normal(means_NN.T.flatten(),vars_NN.T.flatten()).rsample(torch.Size((num_MC,)))
+                                                  .reshape(num_MC,mean_emb.shape[0],-1))
+        
+        rank_samples = rank_samples.permute(2, 0, 1)
+        dist_to_NN = (torch.sub(rank_samples,emb_samples)).pow(2).sum(2)
+    
+        """ OLD
+        # Calc scaled non-centered chi-sq dists parameters
+        scaling = var_emb + vars_NN
+        delta = (mean_emb - means_NN.T).T
+        nonc = (scaling**(-1)*torch.diag(torch.matmul(delta.T,delta))).cpu().numpy()
+        nonc = np.repeat(nonc,num_MC).reshape(num_NN,num_MC).T
+        df = len(mean_emb)
+        df = np.repeat(df,num_NN*num_MC).reshape(num_NN,num_MC).T
+        
+        # Sample dist
+        dist_to_NN = (scaling*torch.Tensor(noncentral_chisquare(df,nonc,)).cuda()).T
+        """
+        # Find smallest distance to image
+        _, indx_min = torch.min(dist_to_NN,0)
+        indx_class, counts = indx_min.unique(return_counts=True)
+        counts = counts.cpu()/num_MC
+        probs = {key:0 for key in np.unique(self.classes)}
+        for i in range(len(counts)):
+            probs[classes_NN[indx_class[i].item()]]+=counts[i].item()
+        
+        from src.utils.performance_measures_helper_functions import _get_entropy_unnormalized_
+        
+        if _get_entropy_unnormalized_(np.array(list(probs.values()))) >= 1.6:
+            # Find smallest distance to image
+            _, indx_min = torch.min(dist_to_NN,0)
+            probs_per_count = pd.DataFrame(columns=['MC Samples','Class'])
+            class_count = []
+            for i in range(len(indx_min)):
+                probs_per_count_temp = pd.DataFrame()
+                probs_per_count_temp['MC Samples'] = np.ones((i+1,))*(i+1)
+                class_count.append(classes_NN[indx_min[i].item()])
+                probs_per_count_temp['Class'] = class_count
+                probs_per_count = pd.concat([probs_per_count,probs_per_count_temp],axis=0)
+                
+            
+            import seaborn as sns
+            import matplotlib.pyplot as plt
+            fig,ax = plt.subplots(1,1,figsize=(9,6))
+            probs_per_count = probs_per_count.reset_index().drop(columns=['index'])
+            hue_order = np.sort(np.unique(class_count))
+            g = sns.kdeplot(data=probs_per_count, x="MC Samples", hue="Class", multiple="fill", alpha=1,ax=ax,hue_order=hue_order,bw=0.001)
+            ax.set_xlim(0,4200)
+            ax.set_xlabel('MC Samples',weight='bold',fontsize=16)
+            ax.set_ylabel('Probability distribution',weight='bold',fontsize=16)
+            ax.set_title('Stability test of the $\\it{kNN}$-$\\it{MC}$-$\\it{min}$-$\\it{dist}$ algorithm',weight='bold',fontsize=16)
+            pdb.set_trace()
+            ax.tick_params(axis='both',labelsize=15)
+            plt.tight_layout()
+            fig.savefig('test.png')
+            
+            
+            #transformer2 = transforms.Compose([transforms.Resize((int(self.params['img_size']),int(self.params['img_size'])))])
+            #img = image_object_loader('./data/raw/JPEGImages/'+objects[i],bboxs[i],transformer2)
+            #img.save('image.png')
+            #classes[i]
+            
+        return probs 
+    
+    
 class ImageClassifier_Classic(ImageClassifier):
     
     def __init__(self, model_name: str,
@@ -1059,7 +1189,7 @@ class ImageClassifier_Classic(ImageClassifier):
                          ./models/state_dict respectively, with names {model}.pt and {model}.json)
             model_data (str): TRAIN or TRAINVAL (use either training data or training and val data).
         """
-        super().__init__(model_name, model_type, params, model_data,calibration_method)
+        super().__init__(model_name, model_type, params, model_data,False,calibration_method)
         self._create_dict_of_class_idxs_()
         all_classes = ['train','cow','tvmonitor','boat','cat','person','aeroplane','bird',
                        'dog','sheep','bicycle','bus','motorbike','bottle','chair',
@@ -1157,7 +1287,7 @@ class ImageClassifier_Classic(ImageClassifier):
                 probs = torch.softmax(self.model.forward_head(backbone_repr,self.rnd_states[0])
                                       .squeeze(),-1).cpu().numpy()
                 for i in range(24):
-                    probs += torch.softmax(self.model.forward_head(backbone_repr,self.rnd_states[i])
+                    probs += torch.softmax(self.model.forward_head(backbone_repr,self.rnd_states[i+1])
                                            .squeeze(),-1).cpu().numpy()
                     
                 probs = probs/25

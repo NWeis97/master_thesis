@@ -50,12 +50,12 @@ for k in range(K):
 data3 = pd.DataFrame(data)
 data3['x']=indx
 fig, ax = plt.subplots(1,1,figsize=(8,6))
-data3.plot(kind='line',legend=False,lw=1,ax=ax,x='x')
+data3.plot(kind='line',legend=False,lw=1,ax=ax,x='x',colormap='RdBu')
 ax.plot([0,D],[0,0],linewidth=2,linestyle='--',color='black')
-ax.set_xlabel(f'Dimension D')
-ax.set_ylabel('Value of Lyapunov Condition expression')
+ax.set_xlabel(f'Dimension D',weight='bold',fontsize=14)
+ax.set_ylabel('Value of Lyapunov Condition expression',weight='bold',fontsize=14)
 ax.set_xscale('log')
-ax.set_title('Lyapunov Condition simulation')
+ax.set_title('Lyapunov Condition simulation',weight='bold',fontsize=17)
 ax.set_yscale('symlog', linthresh=1e-6)
 fig.savefig('reports/figures/Lyapunov_condition_test2.png')
 

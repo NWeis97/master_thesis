@@ -1,10 +1,10 @@
 #!/bin/bash
-export R=_BTM_diag9
+export R=_BTM_iso
 ### NAME OF FILE
-#BSUB -J config_BTM_diag9
+#BSUB -J config_BTM_iso
 ### OUTPUT AND ERROR FILE
-#BSUB -o config_hpc/config_BTM_diag9.out
-#BSUB -e config_hpc/config_BTM_diag9.err
+#BSUB -o config_hpc/config_BTM_iso.out
+#BSUB -e config_hpc/config_BTM_iso.err
 ### QUEUE TO BE USED
 #BSUB -q gpuv100
 ### gpu memory
@@ -39,24 +39,26 @@ export num_NN=675
 export num_NN_kNN=6750
 export num_MC=3000
 export dist_classes=nn
-
+export temp=0.21
 
 # min_dist_NN (OOD False)
-python3 src/training_test/test_classifier_model.py --model-name=${model_name} --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN} --num-MC=${num_MC} --method='min_dist_NN' --with_OOD='False' --dist_classes=${dist_classes} --calibration_method='SWAG'
-python3 src/training_test/test_classifier_model.py --model-name=${model_name} --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN} --num-MC=${num_MC} --method='min_dist_NN' --with_OOD='False' --dist_classes=${dist_classes} --calibration_method='MCDropout'
-python3 src/training_test/test_classifier_model.py --model-name=${model_name} --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN} --num-MC=${num_MC} --method='min_dist_NN' --with_OOD='False' --dist_classes=${dist_classes} --calibration_method='None'
+python3 src/training_test/test_classifier_model.py --model-name=${model_name} --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN} --num-MC=${num_MC} --method='min_dist_NN' --with_OOD='False' --dist_classes=${dist_classes} --calibration_method='SWAG' --temp=${temp}
+python3 src/training_test/test_classifier_model.py --model-name=${model_name} --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN} --num-MC=${num_MC} --method='min_dist_NN' --with_OOD='False' --dist_classes=${dist_classes} --calibration_method='MCDropout' --temp=${temp}
+python3 src/training_test/test_classifier_model.py --model-name=${model_name} --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN} --num-MC=${num_MC} --method='min_dist_NN' --with_OOD='False' --dist_classes=${dist_classes} --calibration_method='None' --temp=${temp}
+python3 src/training_test/test_classifier_model.py --model-name=${model_name} --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN} --num-MC=${num_MC} --method='min_dist_NN' --with_OOD='False' --dist_classes=${dist_classes} --calibration_method='TempScaling' --temp=${temp}
 
 # kNN_gauss_kernel (OOD False)
-python3 src/training_test/test_classifier_model.py --model-name=${model_name} --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN_kNN} --num-MC=${num_MC} --method='kNN_gauss_kernel' --with_OOD='False' --dist_classes=${dist_classes} --calibration_method='SWAG'
-python3 src/training_test/test_classifier_model.py --model-name=${model_name} --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN_kNN} --num-MC=${num_MC} --method='kNN_gauss_kernel' --with_OOD='False' --dist_classes=${dist_classes} --calibration_method='MCDropout'
-python3 src/training_test/test_classifier_model.py --model-name=${model_name} --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN_kNN} --num-MC=${num_MC} --method='kNN_gauss_kernel' --with_OOD='False' --dist_classes=${dist_classes} --calibration_method='None'
+python3 src/training_test/test_classifier_model.py --model-name=${model_name} --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN_kNN} --num-MC=${num_MC} --method='kNN_gauss_kernel' --with_OOD='False' --dist_classes=${dist_classes} --calibration_method='SWAG' --temp=${temp}
+python3 src/training_test/test_classifier_model.py --model-name=${model_name} --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN_kNN} --num-MC=${num_MC} --method='kNN_gauss_kernel' --with_OOD='False' --dist_classes=${dist_classes} --calibration_method='MCDropout' --temp=${temp}
+python3 src/training_test/test_classifier_model.py --model-name=${model_name} --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN_kNN} --num-MC=${num_MC} --method='kNN_gauss_kernel' --with_OOD='False' --dist_classes=${dist_classes} --calibration_method='None' --temp=${temp}
 
 # min_dist_NN (OOD True)
-python3 src/training_test/test_classifier_model.py --model-name=${model_name} --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN} --num-MC=${num_MC} --method='min_dist_NN' --with_OOD='True' --dist_classes=${dist_classes} --calibration_method='SWAG'
-python3 src/training_test/test_classifier_model.py --model-name=${model_name} --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN} --num-MC=${num_MC} --method='min_dist_NN' --with_OOD='True' --dist_classes=${dist_classes} --calibration_method='MCDropout'
-python3 src/training_test/test_classifier_model.py --model-name=${model_name} --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN} --num-MC=${num_MC} --method='min_dist_NN' --with_OOD='True' --dist_classes=${dist_classes} --calibration_method='None'
+python3 src/training_test/test_classifier_model.py --model-name=${model_name} --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN} --num-MC=${num_MC} --method='min_dist_NN' --with_OOD='True' --dist_classes=${dist_classes} --calibration_method='SWAG' --temp=${temp}
+python3 src/training_test/test_classifier_model.py --model-name=${model_name} --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN} --num-MC=${num_MC} --method='min_dist_NN' --with_OOD='True' --dist_classes=${dist_classes} --calibration_method='MCDropout' --temp=${temp}
+python3 src/training_test/test_classifier_model.py --model-name=${model_name} --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN} --num-MC=${num_MC} --method='min_dist_NN' --with_OOD='True' --dist_classes=${dist_classes} --calibration_method='None' --temp=${temp}
+python3 src/training_test/test_classifier_model.py --model-name=${model_name} --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN} --num-MC=${num_MC} --method='min_dist_NN' --with_OOD='True' --dist_classes=${dist_classes} --calibration_method='TempScaling' --temp=${temp}
 
 # kNN_gauss_kernel (OOD True)
-python3 src/training_test/test_classifier_model.py --model-name=${model_name} --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN_kNN} --num-MC=${num_MC} --method='kNN_gauss_kernel' --with_OOD='True' --dist_classes=${dist_classes} --calibration_method='SWAG'
-python3 src/training_test/test_classifier_model.py --model-name=${model_name} --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN_kNN} --num-MC=${num_MC} --method='kNN_gauss_kernel' --with_OOD='True' --dist_classes=${dist_classes} --calibration_method='MCDropout'
-python3 src/training_test/test_classifier_model.py --model-name=${model_name} --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN_kNN} --num-MC=${num_MC} --method='kNN_gauss_kernel' --with_OOD='True' --dist_classes=${dist_classes} --calibration_method='None'
+python3 src/training_test/test_classifier_model.py --model-name=${model_name} --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN_kNN} --num-MC=${num_MC} --method='kNN_gauss_kernel' --with_OOD='True' --dist_classes=${dist_classes} --calibration_method='SWAG' --temp=${temp}
+python3 src/training_test/test_classifier_model.py --model-name=${model_name} --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN_kNN} --num-MC=${num_MC} --method='kNN_gauss_kernel' --with_OOD='True' --dist_classes=${dist_classes} --calibration_method='MCDropout' --temp=${temp}
+python3 src/training_test/test_classifier_model.py --model-name=${model_name} --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN_kNN} --num-MC=${num_MC} --method='kNN_gauss_kernel' --with_OOD='True' --dist_classes=${dist_classes} --calibration_method='None' --temp=${temp}

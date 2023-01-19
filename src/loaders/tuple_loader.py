@@ -22,10 +22,10 @@ from src.models.image_classification_network import ImageClassifierNet_BayesianT
 # Init logger
 logger = logging.getLogger('__main__')
 
-
+# Inspired on 'cnnimageretrieval-pytorch/cirtorch/datasets/traindataset.py' by 'filipradenovic'
 class TuplesDataset(data.Dataset):
     """Data loader that loads training and validation tuples
-        (based on 'cnnimageretrieval-pytorch/cirtorch/datasets/traindataset.py' by 'filipradenovic')
+        
     
     Args:
         mode (string): 'train' or 'val' for training and validation parts of dataset

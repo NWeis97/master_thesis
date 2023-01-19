@@ -530,6 +530,7 @@ def calibration_plots(cali_plot_df_acc: pd.DataFrame,
             ax.set_yscale('symlog', linthresh=1e-3)
             ax.scatter(x,y,marker='o',s=sizes, edgecolors='k', c=color,linewidth=0)
         else:
+            ax.plot(x,y,marker='o', linewidth=1.5, markersize=0,color=color,zorder=1)
             if sum((trust_std) & (x.isna() == False)) >= 1:
                 ax.scatter(x[(trust_std) & (x.isna() == False)],
                            y[(trust_std) & (x.isna() == False)],
@@ -542,10 +543,7 @@ def calibration_plots(cali_plot_df_acc: pd.DataFrame,
                            y[(trust_std==False) & (x.isna() == False)],
                            marker='o',
                            s=sizes[(trust_std==False) & (x.isna() == False)], 
-                           edgecolors='r', c=color,linewidth=0,zorder=5)
-
-            ax.plot(x,y,marker='o', linewidth=1, markersize=0,color=color,zorder=1)
-            
+                           edgecolors='r', c=color,linewidth=1,zorder=5)
             
             ax.fill_between(x.tolist(), np.maximum((y-1.96*std).tolist(),0), 
                         np.minimum((y+1.96*std).tolist(),1),alpha=0.5,
@@ -885,4 +883,54 @@ def UCE_plots_classewise(cali_plot_df_acc: pd.DataFrame,
                title="$\\bf{Trust\,\,errorbar}$",fontsize=13,title_fontsize=15)
     
     
+    return fig
+
+
+def uncert_var_blur_pred_plot(blurriness: np.array,
+                              vars: np.array,
+                              pred: list,
+                              uncertainties: list):
+    blurry = 1/blurriness
+    #data = pd.DataFrame({'Blurriness':blurry,'Variance':vars,'Uncertainty':uncertainties,'Misclassification': 1.0-np.array(pred)*1.0})
+    data = pd.DataFrame({'Blurriness':blurry,'Variance':vars,'Uncertainty':uncertainties,'Misclassification': pred})
+
+    #palette=sns.cubehelix_palette(start=.5, rot=-.5, as_cmap=True)
+    #fig,ax = plt.subplots(1,1,figsize=(4.3,3.2))
+    #sns.heatmap(data.corr(),annot=True,ax=ax,cmap=palette)
+    #ax.set_xticklabels(['Blur.','Var.','Unc.','Mis.'], rotation=0)
+    #ax.set_title('Correlation Matrix')
+    #plt.tight_layout()
+    #pdb.set_trace()
+    
+    
+    fig, ax = plt.subplots(1,1,figsize=(8,6))
+    
+    palette = sns.color_palette()
+    palette = [palette[i] for i in [2,3]]
+    
+    # Palette
+    pal1 = sns.color_palette("hls",10)
+    pal2 = sns.color_palette("husl",10)
+    palette = []
+    for i in range(10):
+        palette.append(pal1[i])
+        palette.append(pal2[i])
+        
+    data=data.sort_values('Class')
+    sns.scatterplot(x='Variance',y='Uncertainty',hue='Misclassification',size='Blurriness',data=data,ax=ax,sizes=(10,400),palette = palette)
+
+    # Move legend
+    box = ax.get_position()
+    ax.set_position([box.x0, box.y0, box.width * 0.85, box.height])  
+    ax.legend(loc='center left', bbox_to_anchor=(1.02, 0), fontsize=12,ncol=1)
+    
+    ax.get_legend().get_texts()[0].set_text('$\\bf{Class}$')
+    #ax.get_legend().get_texts()[3].set_text('\n$\\bf{Blurriness}$')
+    ax.set_xlabel('Variance',weight='bold',fontsize=13)
+    ax.set_ylabel('Uncertainty',weight='bold',fontsize=13)
+    ax.set_title('Variance vs. Uncertainty vs. Blurriness',weight='bold',fontsize=15)
+    plt.tight_layout()
+    plt.subplots_adjust(right=0.75)   
+    
+
     return fig
