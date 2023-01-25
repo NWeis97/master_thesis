@@ -6,7 +6,21 @@ import pdb
 # Based on Warburg. F. et al. implementation https://arxiv.org/pdf/2011.12663.pdf
 
 class BayesianTripletLoss(nn.Module):
-    def __init__(self, margin, varPrior, kl_scale_factor = 1e-6, var_type = 'iso'): 
+    """ An object that can calculates the Bayesian Triplet Loss for a set of tuples
+
+    Args:
+        margin (float):                     The margin between the anchor/positive and 
+                                            anchor/negative pairs.
+        varPrior (float):                   The variance of the prior
+        kl_scale_factor (float, optional):  The fraction to which the KL divergence contributes to
+                                            the loss [DEFAULT: 1e-6].
+        var_type (str, optional):           'iso' or 'diag' defining the variance type of the 
+                                            embeddings [DEFAULT: 'iso']
+    """
+   
+    def __init__(self, margin: float, varPrior: float, kl_scale_factor: float = 1e-6, 
+                 var_type: str = 'iso'): 
+        
         super(BayesianTripletLoss, self).__init__()
         
         self.margin = torch.tensor(margin).cuda()

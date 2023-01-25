@@ -20,7 +20,7 @@ logger = logging.getLogger('__main__')
 
 
 class Pooling_Dataset(data.Dataset):
-    """Dataeset that loads training and validation images for the classic softmax classifer model
+    """ Dataset that loads training and validation images for the classic softmax classifer model
     
     Args:
         mode (string): 'train' or 'val' for training and validation parts of dataset
@@ -198,6 +198,12 @@ class Pooling_Dataset(data.Dataset):
 
 
     def update_backbone_repr_pool(self, net: ImageClassifierNet_Classic):
+        """Updates pool of backbone representationd of images, which are used in __getitem__()
+
+        Args:
+            net (ImageClassifierNet_Classic): Model network for extracting backbone reprensentations
+        """
+        
         logger.info('\n\n §§§§ Updating pool for *{}* dataset... §§§§\n'.format(self.mode))
         
         #prepare net

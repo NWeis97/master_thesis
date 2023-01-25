@@ -31,7 +31,6 @@ def negative_loglikelihood(muA, muP, muN, varA, varP, varN, margin = 0.0):
 
 
 def kl_div_gauss_iso(mu_q, var_q, mu_p, var_p):
-    
     # Get dims and squeeze to 1d
     N, D = mu_q.shape
     var_q = var_q.squeeze()
@@ -45,7 +44,6 @@ def kl_div_gauss_iso(mu_q, var_q, mu_p, var_p):
 
 
 def kl_div_gauss_diag(mu_q, var_q, mu_p, var_p):
-    
     # Get dims
     N, D = mu_q.shape
     

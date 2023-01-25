@@ -8,24 +8,18 @@ import time
 import termplotlib as tpl
 from pyfiglet import Figlet
 import sys
+import plotext as plx
 
 
-if len(sys.argv)>3:
+if len(sys.argv)>2:
       rating = sys.argv[1]
       tf = float(1/int(sys.argv[2]))
-      gnu_plot = sys.argv[3]
-elif len(sys.argv)>2:
-      rating = sys.argv[1]
-      tf = float(1/int(sys.argv[2]))
-      gnu_plot = 'True'
 elif len(sys.argv)>1:
       rating = sys.argv[1]
       tf = 1
-      gnu_plot = 'True'
 else:
       rating = 'Our'
       tf = 1
-      gnu_plot = 'True'
 
 index = [1,2,3,4,5,6,6.5,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31]
 brewery = ['Founders','Vocation','Sierra Nevada','Svaneke','Brewdog','Brewdog',
@@ -293,143 +287,182 @@ fig.show()
 input('>')
 print("________________________________________________________________________________________________________________________\n")
 
-
-if gnu_plot == 'True':
-      gnu_avail = True
+rat_ticks = [1*i for i in range(6)]
+rat_labels = [str(i)+'.00'  for i in rat_ticks]
       
-      str_=f"####### Volume vs. {rating} Rating #######"
-      print(str("\n\t"+"#"*len(str_)))
-      print("\t"+str_)
-      print(str("\t"+"#"*len(str_)))
-      print("\nHere we see a upward going trend for rating, when the volume is increased.")
-      print("But when the volume becomes to high, the rating settles at around 3.")
-      x = df['Vol (%)'].fillna(6)
-      y = df[rating]
-      try:
-            fig = tpl.figure()
-            fig.plot(x, y, width=60, height=22,xlabel="Volume (%)",plot_command="plot '-' with p pt 24")
-            fig.show()
-      except:
-            gnu_avail = False
-            print("\n\n")
-            print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-            print("ERROR: 'gnuplot' has not been installed on computer, graphs can not be shown.")
-            print("Install 'gnuplot' on computer to show graphs")
-            print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-            print("\n\n")
-
-            print("Skipping remaining graphs...")
-            print("\n")
-
-      input('>')
-      print("________________________________________________________________________________________________________________________\n")
+str_=f"####### Volume vs. {rating} Rating #######"
+print(str("\n\t"+"#"*len(str_)))
+print("\t"+str_)
+print(str("\t"+"#"*len(str_)))
+print("\nHere we see a upward going trend for rating, when the volume is increased.")
+print("But when the volume becomes to high, the rating settles at around 3.")
+x = df['Vol (%)'].fillna(6)
+y = df[rating]
+plx.scatter(x,y)
+plx.plotsize(60,22)
+plx.xlabel("Volume (%)")
+plx.title(f"Volume vs. '{rating}' Rating")
+plx.ylim(0,5)
+plx.xlim(0,12)
+plx.yticks(rat_ticks,rat_labels)
+plx.show()
+input('>')
+print("________________________________________________________________________________________________________________________\n")
 
 
 
-      if gnu_avail == True:
-            str_=f"####### Untappd Rating vs. {rating} Rating #######"
-            print(str("\n\t"+"#"*len(str_)))
-            print("\t"+str_)
-            print(str("\t"+"#"*len(str_)))
-            print("\nWe seem to agree quite well with the common people.")
-            x = df['Untappd Rat.'].fillna(2.5)
-            y = df[rating]
-            fig = tpl.figure()
-            fig.plot(x, y, width=60, height=22,xlabel="Untappd Rating",plot_command="plot '-' with p pt 24")
-            fig.show()
-            input('>')
-            print("________________________________________________________________________________________________________________________\n")
+str_=f"####### Untappd Rating vs. {rating} Rating #######"
+print(str("\n\t"+"#"*len(str_)))
+print("\t"+str_)
+print(str("\t"+"#"*len(str_)))
+print("\nWe seem to agree quite well with the common people.")
+x = df['Untappd Rat.'].fillna(2.5)
+y = df[rating]
+plx.clear_figure()
+plx.scatter(x,y)
+plx.plotsize(60,22)
+plx.xlabel("Untappd Rating")
+plx.title(f"Untappd Rating vs. '{rating}' Rating")
+plx.ylim(0,5)
+plx.xlim(0,5)
+plx.xticks(rat_ticks,rat_labels)
+plx.yticks(rat_ticks,rat_labels)
+plx.show()
+input('>')
+print("________________________________________________________________________________________________________________________\n")
 
 
 
-            str_=f"####### Size vs. {rating} Rating #######"
-            print(str("\n\t"+"#"*len(str_)))
-            print("\t"+str_)
-            print(str("\t"+"#"*len(str_)))
-            print("\nThe closer to 440 mL the better!")
-            x = df['Size (mL)'].fillna(400)
-            y = df[rating]
-            fig = tpl.figure()
-            fig.plot(x, y, width=60, height=22, xlabel="Size (mL)",plot_command="plot '-' with p pt 24")
-            fig.show()
-            input('>')
-            print("________________________________________________________________________________________________________________________\n")
+str_=f"####### Size vs. {rating} Rating #######"
+print(str("\n\t"+"#"*len(str_)))
+print("\t"+str_)
+print(str("\t"+"#"*len(str_)))
+print("\nThe closer to 440 mL the better!")
+x = df['Size (mL)'].fillna(400)
+y = df[rating]
+plx.clear_figure()
+plx.scatter(x,y)
+plx.plotsize(60,22)
+plx.xlabel("Size (mL)")
+plx.title(f"Size (mL) vs. '{rating}' Rating")
+plx.ylim(0,5)
+plx.xlim(200,800)
+plx.yticks(rat_ticks,rat_labels)
+plx.show()
+input('>')
+print("________________________________________________________________________________________________________________________\n")
 
 
 
-            str_=f"####### Price per Liter vs. {rating} Rating #######"
-            print(str("\n\t"+"#"*len(str_)))
-            print("\t"+str_)
-            print(str("\t"+"#"*len(str_)))
-            print("\nThere seem to be no clear indication that more expensive beers are better...")
-            x = df['Price (kr/L)'].fillna(80)
-            y = df[rating].values
-            fig = tpl.figure()
-            fig.plot(x, y, width=60, height=22, xlabel="Price (kr/L)",plot_command="plot '-' with p pt 24")
-            fig.show()
-            input('>')
-            print("________________________________________________________________________________________________________________________\n")
+str_=f"####### Price per Liter vs. {rating} Rating #######"
+print(str("\n\t"+"#"*len(str_)))
+print("\t"+str_)
+print(str("\t"+"#"*len(str_)))
+print("\nThere seem to be no clear indication that more expensive beers are better...")
+x = df['Price (kr/L)'].fillna(80)
+y = df[rating].values
+plx.clear_figure()
+plx.scatter(x,y)
+plx.plotsize(60,22)
+plx.xlabel("Price (kr/L)")
+plx.title(f"Price (kr/L) vs. '{rating}' Rating")
+plx.ylim(0,5)
+plx.xlim(0,120)
+plx.yticks(rat_ticks,rat_labels)
+plx.show()
+input('>')
+print("________________________________________________________________________________________________________________________\n")
 
 
 
-            str_=f"####### Time (day) vs. {rating} Rating #######"
-            print(str("\n\t"+"#"*len(str_)))
-            print("\t"+str_)
-            print(str("\t"+"#"*len(str_)))
-            print("\nLooks at bit like our heartbeat after 30 beers xD")
-            x = df.index
-            y = df[rating].values
-            fig = tpl.figure()
-            fig.plot(x, y, width=60, height=22, xlabel="Day")
-            fig.show()
-            input('>')
-            print("________________________________________________________________________________________________________________________\n")
+str_=f"####### Time (day) vs. {rating} Rating #######"
+print(str("\n\t"+"#"*len(str_)))
+print("\t"+str_)
+print(str("\t"+"#"*len(str_)))
+print("\nLooks at bit like our heartbeat after 30 beers xD")
+x = df.index
+y = df[rating].values
+plx.clear_figure()
+plx.plot(x,y)
+plx.plotsize(60,22)
+plx.xlabel("Day")
+plx.title(f"Day vs. '{rating}' Rating")
+plx.ylim(0,5)
+plx.xlim(0,32)
+plx.yticks(rat_ticks,rat_labels)
+plx.show()
+input('>')
+print("________________________________________________________________________________________________________________________\n")
 
 
 
-            print("\n\n________________________________________________________________________________________________________________________")
-            print("________________________________________________________________________________________________________________________")
-            print("________________________________________________________________________________________________________________________")
-            print(f"\nIt's time to some intern comparison between us... First lets have a look at {rating}'s"+
-                  " ratings vs. all five of us.\n\n")
-            input('>')
-
-            fig = tpl.figure()
-            fig.plot(df[rating],df['Weis'], width=60, height=22,title=f"{rating} vs Weis", xlabel=rating,plot_command="plot '-' with p pt 24")
-            fig.show()
-            print("\n\n")
-            input('>')
-            fig = tpl.figure()
-            fig.plot(df[rating],df['Peter'], width=60, height=22,title=f"{rating} vs Peter", xlabel=rating,plot_command="plot '-' with p pt 24")
-            fig.show()
-            print("\n\n")
-            input('>')
-            fig = tpl.figure()
-            fig.plot(df[rating],df['Carl'], width=60, height=22,title=f"{rating} vs Carl", xlabel=rating,plot_command="plot '-' with p pt 24")
-            fig.show()
-            print("\n\n")
-            input('>')
-            fig = tpl.figure()
-            fig.plot(df[rating],df['Patrick'], width=60, height=22,title=f"{rating} vs Patrick", xlabel=rating,plot_command="plot '-' with p pt 24")
-            fig.show()
-            print("\n\n")
-            input('>')
-            fig = tpl.figure()
-            fig.plot(df[rating],df['Rasmus'], width=60, height=22,title=f"{rating} vs Rasmus", xlabel=rating,plot_command="plot '-' with p pt 24")
-            fig.show()
-            print("\n\n")
-            input('>')
-else:
-      print(".")
-      print(".")
-      print(".")
-      print(".")
-      print("Gnu_plot is not set to 'True', so plots are not visible")
-      print(".")
-      print(".")
-      print(".")
-      print(".")
-      input('>')
+print("\n\n________________________________________________________________________________________________________________________")
+print("________________________________________________________________________________________________________________________")
+print("________________________________________________________________________________________________________________________")
+print(f"\nIt's time to some intern comparison between us... First lets have a look at {rating}'s"+
+      " ratings vs. all five of us.\n\n")
+input('>')
+x = df[rating]
+plx.clear_figure()
+plx.scatter(x,df['Weis'])
+plx.plotsize(60,22)
+plx.xlabel(f"'{rating}' Rating")
+plx.title(f"'{rating}' Rating vs. 'Weis' Rating")
+plx.ylim(0,5)
+plx.xlim(0,5)
+plx.xticks(rat_ticks,rat_labels)
+plx.yticks(rat_ticks,rat_labels)
+plx.show()
+print("\n\n")
+input('>')
+plx.clear_figure()
+plx.scatter(x,df['Peter'])
+plx.plotsize(60,22)
+plx.xlabel(f"'{rating}' Rating")
+plx.title(f"'{rating}' Rating vs. 'Peter' Rating")
+plx.ylim(0,5)
+plx.xlim(0,5)
+plx.xticks(rat_ticks,rat_labels)
+plx.yticks(rat_ticks,rat_labels)
+plx.show()
+print("\n\n")
+input('>')
+plx.clear_figure()
+plx.scatter(x,df['Carl'])
+plx.plotsize(60,22)
+plx.xlabel(f"'{rating}' Rating")
+plx.title(f"'{rating}' Rating vs. 'Carl' Rating")
+plx.ylim(0,5)
+plx.xlim(0,5)
+plx.xticks(rat_ticks,rat_labels)
+plx.yticks(rat_ticks,rat_labels)
+plx.show()
+print("\n\n")
+input('>')
+plx.clear_figure()
+plx.scatter(x,df['Patrick'])
+plx.plotsize(60,22)
+plx.xlabel(f"'{rating}' Rating")
+plx.title(f"'{rating}' Rating vs. 'Patrick' Rating")
+plx.ylim(0,5)
+plx.xlim(0,5)
+plx.xticks(rat_ticks,rat_labels)
+plx.yticks(rat_ticks,rat_labels)
+plx.show()
+print("\n\n")
+input('>')
+plx.clear_figure()
+plx.scatter(x,df['Rasmus'])
+plx.plotsize(60,22)
+plx.xlabel(f"'{rating}' Rating")
+plx.title(f"'{rating}' Rating vs. 'Rasmus' Rating")
+plx.ylim(0,5)
+plx.xlim(0,5)
+plx.xticks(rat_ticks,rat_labels)
+plx.yticks(rat_ticks,rat_labels)
+plx.show()
+print("\n\n")
+input('>')
 
 
 print("Based on correlation between ratings, the following are the most compatible in" +

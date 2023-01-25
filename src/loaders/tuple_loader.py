@@ -1,19 +1,17 @@
 # Standard
 import os
-import pickle
 import pdb
 import json
-from PIL import Image
 import logging
 import numpy as np
 import multiprocessing
-import pandas as pd
 
 # Torch
 import torch
+from torch import Tensor
 import torch.utils.data as data
-from torchvision.models import resnet50, ResNet50_Weights
 from torchvision import transforms
+from typing import Tuple
 
 # Load own libs
 from src.loaders.generic_loader import ObjectsFromList, image_object_loader
@@ -24,35 +22,32 @@ logger = logging.getLogger('__main__')
 
 # Inspired on 'cnnimageretrieval-pytorch/cirtorch/datasets/traindataset.py' by 'filipradenovic'
 class TuplesDataset(data.Dataset):
-    """Data loader that loads training and validation tuples
-        
+    """ Dataset that loads training and validation images for the BTL model
     
     Args:
-        mode (string): 'train' or 'val' for training and validation parts of dataset
-        transform (callable, optional): A function/transform that  takes in an PIL image
-            and returns a transformed version. E.g, ``transforms.RandomCrop``
-        nnum (int, Default:10): Number of negatives for a query image in a training tuple
-        poolsize_class (int, Default:200): Number of images per class in pool
-        keep_prev_tuples (bool, Default:True): Should we keep tuples from previous generation?
-        classes_not_trained_on (list, Default:[]): What classes should we not train on
-        approx_similarity (bool, Default:True): Should the similarity measure be approximative (dot
-                                                product) or exact (l2-norm)
-     
-     Attributes:
-        images (list): List of full filenames for each image
-        clusters (list): List of clusterID per image
-        qidxs (list): List of qsize_class*#classes query image indexes to be processed in an epoch
-        pidxs (list): List of qsize_class*#classes positive image indexes, each corresponding to 
-                      query at the same position in qidxs
-        nidxs (list): List of qsize_class*#classes tuples of negative images
-                      Each nidxs tuple contains nnum images corresponding to query image at the 
-                      same position in qidxs
-        Lists qidxs, pidxs, nidxs are refreshed by calling the ``create_epoch_tuples()`` method, 
-            ie new q-p pairs are picked and negative images are remined
+        mode (str):                              Specify 'train' or 'val' for selecting the training 
+                                                 or validation dataset.
+        nnum (int, optional):                    Number of negatives mined using the hard-negative 
+                                                 mining procedure [DEFAULT: 10].
+        qsize_class (int, optional):             Number of tuples for each class (based on anchor).
+                                                 [DEFAULT: 20].
+        npoolsize (int, optional):               Number of random samples from sample pool used in
+                                                 the negative pool [DEFAULT: 2000].         
+        poolsize_class (int, optional):          Number of samples from each class in sample pool
+                                                 [DEFAULT: 200].
+        transform (transforms, optional):        Transforms object for transforming PIL images to 
+                                                 torch.Tensor (with other tranforms) [DEFUALT: None]
+        classes_not_trained_on (list, optional): What classes should not be trained on [DEFAULT: []]
+        approx_similarity (bool, optional):      Should the approximative similarity be used to 
+                                                 extract hard-negatives? [DEFAULT: False]
+        
+    Attributes:
+        update_backbone_repr_pool (func): Update backbone representation of training images
+        create_epoch_tuples (func):       Create a batch of tuples (used in __getitem__)
     """
 
     def __init__(self, mode: str, nnum: int=10, qsize_class:int = 20, npoolsize: int = 2000,
-                 poolsize_class:int = 200, transform: transforms=None, keep_prev_tuples: bool=True, 
+                 poolsize_class:int = 200, transform: transforms=None,
                  classes_not_trained_on: list=[], approx_similarity: bool=True):
 
         if not (mode == 'train' or mode == 'val' or mode == 'test' or mode == 'trainval'):
@@ -61,14 +56,17 @@ class TuplesDataset(data.Dataset):
         # Define attributes
         self.mode = mode
         self.loader = image_object_loader
-        self.keep_prev_tuples = keep_prev_tuples
         self.approx_similarity = approx_similarity
         self.classes_not_trained_on = classes_not_trained_on
-        self.transform = transform
         self.print_freq = 500
         self.require_grad = True
         if (self.mode == 'val') | (self.mode == 'test'):
             self.require_grad = False
+        if transforms == None:
+            self.transform = transforms.Compose([transforms.PILToTensor(),
+                                                 transforms.ConvertImageDtype(torch.float)])
+        else:
+            self.transform = transform
         
         # Select subset of classes
         class_list = ['train','cow','tvmonitor','boat','cat','person','aeroplane','bird',
@@ -76,8 +74,6 @@ class TuplesDataset(data.Dataset):
                       'diningtable','pottedplant','sofa','horse','car']
         self.classes_trained_on = ([class_ for class_ in class_list if class_ 
                                     not in self.classes_not_trained_on]) 
-        
-        
         
         # Extract data
         self.data_root = './data/processed/'
@@ -96,7 +92,6 @@ class TuplesDataset(data.Dataset):
         self.npoolsize = np.min([npoolsize,self.poolsize])
         self.average_class_size = self.poolsize/len(self.classes_trained_on)
         logger.info(f"The average # samples per class is {self.average_class_size:.0f}")
-        #self.average_class_size = np.min(pd.value_counts(self.classes).values)
 
         # Init idxs list
         self.qidxs = [] # Query idxs (from pool)
@@ -106,13 +101,16 @@ class TuplesDataset(data.Dataset):
         # Init tensors for storing backbone output
         self.backbone_repr = None
 
-    def __getitem__(self, index):
-        """
+    def __getitem__(self, index: int) -> Tuple[list[Tensor], Tensor, list[str]]:
+        """_summary_
+
         Args:
             index (int): Index
+
         Returns:
-            objects tuple (q,p,n1,...,nN): Loaded train/val tuple at index of self.qidxs
+            Tuple[list[Tensor], Tensor, list[str]]: Tuple containing input and target for training
         """
+        
         if self.__len__() == 0:
             raise(RuntimeError("List qidxs is empty. Run ``dataset.create_epoch_tuples(net)`` "+
                                "method to create subset for train/val!"))
@@ -127,8 +125,10 @@ class TuplesDataset(data.Dataset):
         for i in range(self.nnum):
             output.append(self.backbone_repr[self.nidxs[index][i]])
 
+        # Create target
         target = torch.Tensor([-1, 1] + [0]*self.nnum)
         
+        # Create list of classes for each tuple elemt
         classes = [self.pool_classes_list[self.qidxs[index]], self.pool_classes_list[self.pidxs[index]]]
         ([classes.append(self.pool_classes_list[self.nidxs[index][i]]) for i in 
                                                             range(len(self.nidxs[index]))])
@@ -241,7 +241,18 @@ class TuplesDataset(data.Dataset):
 
 
 
-    def update_backbone_repr_pool(self, net: ImageClassifierNet_BayesianTripletLoss):
+    def update_backbone_repr_pool(self, net: ImageClassifierNet_BayesianTripletLoss) -> None:
+        """Updates pool of backbone representationd of images, which are used in 
+           create_epoch_tuples()
+
+        Args:
+            net (ImageClassifierNet_BayesianTripletLoss): Network for extracting backbone 
+                                                          reprensentations
+
+        Raises:
+            MemoryError: If GPU does not have enough memory to store all backbone representations.
+        """
+        
         logger.info('\n\n §§§§ Updating pool for *{}* dataset... §§§§\n'.format(self.mode))
         
         #prepare net
@@ -322,12 +333,32 @@ class TuplesDataset(data.Dataset):
         
             
         
-    def create_epoch_tuples(self, net: ImageClassifierNet_BayesianTripletLoss, num_classes_per_neg,
-                            skip_closeset_neg_prob = 0.0):
+    def create_epoch_tuples(self, net: ImageClassifierNet_BayesianTripletLoss, 
+                                  num_classes_per_neg: int,
+                                  skip_closeset_neg_prob: float = 0.0) -> (Tuple[float,
+                                                                                 Tensor,
+                                                                                 Tensor,
+                                                                                 list]):
+        """ Creates a batch of tuples, which can then be extracted using the __getitem__() function.
 
+        Args:
+            net (ImageClassifierNet_BayesianTripletLoss): Network for extracting embeddings.
+            num_classes_per_neg (int): Number of negatives per class per tuple.
+            skip_closeset_neg_prob (float, optional): Skip hard negative probability [DEFAULT: 0.0].
+
+        Raises:
+            RuntimeError: If 'skip_closeset_neg_prob' is too high, it will sometimes take too long 
+                          to construct tuples. After a certain amount of re-tries, the algorithm 
+                          terminates if tuples has not been created.
+
+        Returns:
+            Tuple[float, Tensor, Tensor, list]: 1 - Average distance to hard-negative
+                                                2 - Means of queries (anchors)
+                                                3 - Variances of queries (anchors)
+                                                4 - List of classes of queries (anchors)
+        """
+        
         logger.info('\n>> Creating tuples for *{}* dataset...'.format(self.mode))
-        #if self.keep_prev_tuples:
-        #    logger.info('>> Keeping tuples from previous generation')        
 
         # prepare network
         net.cuda()

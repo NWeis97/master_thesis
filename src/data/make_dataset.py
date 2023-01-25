@@ -164,6 +164,10 @@ def split_train_val_test(mNs_obj: list[dict],
     Note: we have a limited number of segmented images, thus all 
           of these will be used for testing. Hence no 
           trainval_test_rat
+    
+    Note #2: Above note is outdated, since this project does not concider
+             itself with image segmentation anymore. The procedure is,
+             however, still the same
     """
     num_total = len(mNs_obj)+len(sNm_obj)+len(ms_obj)
     num_trainval = len(mNs_obj)
