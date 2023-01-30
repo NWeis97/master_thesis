@@ -1,3 +1,5 @@
+""" This script simulates the Lyapunov condition test, presented in the report """
+
 import torch
 import matplotlib.pyplot as plt
 import pdb

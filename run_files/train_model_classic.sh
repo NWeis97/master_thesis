@@ -22,9 +22,13 @@ export R=_Vanilla_new_OODs
 ### SEND NOTIFICATION UPON COMPLETION
 #BSUB -N
 
-rm config_hpc/config${R}.out
-rm config_hpc/config${R}.err
 source init.sh
+if [ -e config_hpc/config${R}.out ]
+then
+    echo "Removing old log files...\n\n"
+    rm config_hpc/config${R}.out
+    rm config_hpc/config${R}.err
+fi
 wandb online
 
 python3 src/training_test/train_classic_classifier_model.py --config-filename=training${R}

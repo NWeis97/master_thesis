@@ -1,3 +1,10 @@
+""" This script tests a classic classifier model. This includes extracting probability disitrbutions
+for the entire test dataset, extracting metrics, create visualizations, and more. Most is saved to 
+WandB (so in order to make full use of this, WandB is recommended), while some of the metrics and
+graph values are saved to a pickle file. To use and extract the information from the pickle files,
+see results/concat_results.py
+"""
+
 # Imports
 import wandb
 import pdb

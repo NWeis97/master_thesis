@@ -1,3 +1,5 @@
+""" This scripts contains all functions for creating visualizations """
+
 # Imports
 from typing import List
 import matplotlib.pyplot as plt

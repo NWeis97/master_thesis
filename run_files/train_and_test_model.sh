@@ -22,9 +22,13 @@ export R=_BTM_iso
 ### SEND NOTIFICATION UPON COMPLETION
 #BSUB -N
 
-rm config_hpc/config${R}.out
-rm config_hpc/config${R}.err
 source init.sh
+if [ -e config_hpc/config${R}.out ]
+then
+    echo "Removing old log files...\n\n"
+    rm config_hpc/config${R}.out
+    rm config_hpc/config${R}.err
+fi
 wandb online
 
 # Run model

@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from torch import Tensor
+from torch import Tensor, Union
 import torch.nn.functional as F
 import logging
 import torchvision
@@ -30,20 +30,23 @@ logger = logging.getLogger('__main__')
 
 
 class ImageClassifierNet_BayesianTripletLoss(nn.Module):
-    """ Network for the Bayesian Triplet Loss model
+    """Network for the Bayesian Triplet Loss model
 
-    Args:
-        features (dict): Attributes of a pretrained network. Use the getattr function.
-        meta (dict):     Meta parameters for the model structure
+    Parameters
+    ----------
+    ``features`` : dict
+        Attributes of a pretrained network. Use the getattr function.
+    ``meta`` : dict
+        Meta parameters for the model structure
 
-    Raises:
-        ValueError: Check that output dimension is even for diagonal variance embeddings
-        ValueError: Check that meta['var_type'] is either 'iso' or 'diag'.
-        
-    Returns:
-            Module: ImageClassifierNet_BayesianTripletLoss
+    Raises
+    ------
+    ``ValueError``
+        Check that output dimension is even for diagonal variance embeddings
+    ``ValueError``
+        Check that ``meta['var_type']`` is either ``'iso'`` or ``'diag'``.
     """
-    def __init__(self, features: dict, meta):
+    def __init__(self, features: dict, meta: dict):
         super().__init__()
         self.features = nn.Sequential(*features)
         self.head = []
@@ -149,15 +152,18 @@ class ImageClassifierNet_BayesianTripletLoss(nn.Module):
             self.head_std__var = None
             
             
-
     def forward(self, x: Tensor) -> Tensor:
-        """ Normal forward for nn.Module 
+        """Normal forward for nn.Module 
 
-        Args:
-            x (Tensor): Input tensor (tranformed image). Should have dimensions [batch_size,3,x,x]
+        Parameters
+        ----------
+        ``x`` : Tensor
+            Input tensor (tranformed image). Should have dimensions [batch_size,3,x,x]
 
-        Returns:
-            Tensor: Network output (have dimension [batch_size, mean_dim+var_dim]). Mean is first.
+        Returns
+        -------
+        ``Tensor``
+            Network output (have dimension [batch_size, mean_dim+var_dim]). Mean is first.
         """
         o = self.forward_backbone(x)
         out = self.forward_head(o)
@@ -165,27 +171,36 @@ class ImageClassifierNet_BayesianTripletLoss(nn.Module):
         return out
 
     def forward_backbone(self, x: Tensor) -> Tensor:
-        """ Create backbone representation of image
+        """Create backbone representation of image
 
-        Args:
-            x (Tensor): Input tensor (tranformed image). Should have dimensions [batch_size,3,x,x]
+        Parameters
+        ----------
+        ``x`` : Tensor
+            Input tensor (tranformed image). Should have dimensions [batch_size,3,x,x]
 
-        Returns:
-            Tensor: Backbone representation of image. Dimensions depend on backbone model
+        Returns
+        -------
+        ``Tensor``
+            Backbone representation of image. Dimensions depend on backbone model
         """
         o = self.features(x)
         
         return o
-    
+
     def forward_head(self, o: Tensor, random_state: int = None) -> Tensor:
-        """ Run a backbone representation through the mean and variance heads
+        """Run a backbone representation through the mean and variance heads
 
-        Args:
-            o (Tensor): Backbone representation. Dimensions depend on backbone model
-            random_state (int, optional): Random state. [DEFAULT: Use present]
+        Parameters
+        ----------
+        ``o`` : Tensor
+            Backbone representation. Dimensions depend on backbone model
+        ``random_state`` : int, optional
+            Random state, by default None
 
-        Returns:
-            Tensor: Network output (have dimension [batch_size, mean_dim+var_dim]). Mean is first.
+        Returns
+        -------
+        ``Tensor``
+            Network output (have dimension [batch_size, mean_dim+var_dim]). Mean is first.
         """
         if random_state is not None:
             torch.manual_seed(random_state)
@@ -235,17 +250,22 @@ class ImageClassifierNet_BayesianTripletLoss(nn.Module):
             
         return out
     
-    
+   
     def forward_head_with_swag(self, o: Tensor, random_state: int = None) -> Tensor:
-        """ Just as forward_head(), but the mean and variance head are being sampled from SWAG mean
-            and standard deviation tensors
+        """Just as ``forward_head()``, but the mean and variance head are being sampled from SWAG 
+        mean and standard deviation tensors
 
-        Args:
-            o (Tensor): Backbone representation. Dimensions depend on backbone model
-            random_state (int, optional): Random state. [DEFAULT: Use present]
+        Parameters
+        ----------
+        ``o`` : Tensor
+            Backbone representation. Dimensions depend on backbone model
+        ``random_state`` : int, optional
+            Random state, by default None
 
-        Returns:
-            Tensor: Network output (have dimension [batch_size, mean_dim+var_dim]). Mean is first.
+        Returns
+        -------
+        ``Tensor``
+             Network output (have dimension [batch_size, mean_dim+var_dim]). Mean is first.
         """
         if random_state is not None:
             torch.manual_seed(random_state)
@@ -270,10 +290,12 @@ class ImageClassifierNet_BayesianTripletLoss(nn.Module):
         return output
 
     def reset_batchnorm_running_stats(self) -> nn.Module:
-        """ Reset batchnorm running stats for mean and variance heads
+        """Reset batchnorm running stats for mean and variance heads
 
-        Returns:
-            Module: self
+        Returns
+        -------
+        ``nn.Module``
+            self
         """
         for name, module in self.named_children():
             if name.split('.')[0] != 'features':
@@ -283,10 +305,12 @@ class ImageClassifierNet_BayesianTripletLoss(nn.Module):
         return self
         
     def set_params_to_mean(self) -> nn.Module:
-        """ Set mean and variance head to SWAG mean
+        """Set mean and variance head to SWAG mean
 
-        Returns:
-            Module: self
+        Returns
+        -------
+        ``nn.Module``
+            self
         """
         if self.with_swag:
             if self.head_mean__mean is not None:
@@ -331,15 +355,24 @@ class ImageClassifierNet_BayesianTripletLoss(nn.Module):
 
         This has any effect only on certain modules. See documentations of
         particular modules for details of their behaviors in training/evaluation
-        mode, if they are affected, e.g. :class:`Dropout`, :class:`BatchNorm`,
+        mode, if they are affected, e.g. :class:``Dropout``, :class:``BatchNorm``,
         etc.
 
-        Args:
-            mode (bool, optional): whether to set training mode (True) or evaluation mode (False). 
-                                   [DEFAULT: True].
+        Parameters
+        ----------
+       ``mode`` : bool, optional
+            whether to set training mode (``True``) or evaluation mode (``False``)., by default 
+            ``True``
 
-        Returns:
-            Module: self
+        Returns
+        -------
+        ``nn.Module``
+            self
+
+        Raises
+        ------
+        ``ValueError``
+            ``mode`` must be a boolean value
         """
         if not isinstance(mode, bool):
             raise ValueError("training mode is expected to be boolean")
@@ -353,19 +386,27 @@ class ImageClassifierNet_BayesianTripletLoss(nn.Module):
     
     
     def eval_with_dropout(self, mode: bool = True) -> nn.Module:
-        """Sets the module in training evaluation mode, but keep dropout active.
-
+        """Sets the module in training evaluation mode, but keep ``Dropout`` active.
+        
         This has any effect only on certain modules. See documentations of
         particular modules for details of their behaviors in training/evaluation
-        mode, if they are affected, e.g. :class:`Dropout`, :class:`BatchNorm`,
+        mode, if they are affected, e.g. :class:``Dropout``, :class:``BatchNorm``,
         etc.
 
-        Args:
-            mode (bool): whether to set training mode (True) or evaluation mode (False). 
-                         [DEFAULT: True].
+        Parameters
+        ----------
+        ``mode`` : bool, optional
+            whether to set evaluation mode with dropout (``True``), by default ``True``
 
-        Returns:
-            Module: self
+        Returns
+        -------
+        ``nn.Module``
+            self
+
+        Raises
+        ------
+        ``ValueError``
+            ``mode`` must be a boolean value
         """
         
         mode_train = not mode
@@ -385,16 +426,20 @@ class ImageClassifierNet_BayesianTripletLoss(nn.Module):
 
 
 class ImageClassifierNet_Classic(nn.Module):
-    """ Network for the Classic Vanilla Softmax model.
+    """Network for the Classic Vanilla Softmax model.
 
-    Args:
-        features (dict): Attributes of a pretrained network. Use the getattr function.
-        meta (dict):     Meta parameters for the model structure
-        
-    Returns:
-            Module: ImageClassifierNet_Classic
+    Parameters
+    ----------
+    ``features`` : dict
+        Attributes of a pretrained network. Use the getattr function.
+    ``meta`` : dict
+        Meta parameters for the model structure
+
+    Returns
+    -------
+    ``nn.Module``
+        ``ImageClassifierNet_Classic``
     """
-    
     def __init__(self, features: dict, meta: dict) -> nn.Module:
         super().__init__()
         self.features = nn.Sequential(*features)
@@ -458,13 +503,17 @@ class ImageClassifierNet_Classic(nn.Module):
         
 
     def forward(self, x: Tensor) -> Tensor:
-        """ Normal forward for nn.Module 
+        """Normal forward for nn.Module 
 
-        Args:
-            x (Tensor): Input tensor (tranformed image). Should have dimensions [batch_size,3,x,x]
+        Parameters
+        ----------
+        ``x`` : Tensor
+            Input tensor (tranformed image). Should have dimensions [batch_size,3,x,x]
 
-        Returns:
-            Tensor: Network output (have dimension [batch_size, mean_dim+var_dim]). Mean is first.
+        Returns
+        -------
+        ``Tensor``
+            Network output (have dimension [batch_size, num_classes]).
         """
         o = self.forward_backbone(x)
         out = self.forward_head(o)
@@ -472,27 +521,36 @@ class ImageClassifierNet_Classic(nn.Module):
         return out
 
     def forward_backbone(self, x: Tensor) -> Tensor:
-        """ Create backbone representation of image
+        """Create backbone representation of image
 
-        Args:
-            x (Tensor): Input tensor (tranformed image). Should have dimensions [batch_size,3,x,x]
+        Parameters
+        ----------
+        ``x`` : Tensor
+            Input tensor (tranformed image). Should have dimensions [batch_size,3,x,x]
 
-        Returns:
-            Tensor: Backbone representation of image. Dimensions depend on backbone model
+        Returns
+        -------
+        ``Tensor``
+            Backbone representation of image. Dimensions depend on backbone model
         """
         o = self.features(x)
         
         return o
     
     def forward_head(self, o: Tensor, random_state: int = None) -> Tensor:
-        """ Run a backbone representation through the mean and variance heads
+        """Run a backbone representation through the mean and variance heads
 
-        Args:
-            o (Tensor): Backbone representation. Dimensions depend on backbone model
-            random_state (int, optional): Random state. [DEFAULT: Use present]
+        Parameters
+        ----------
+        ``o`` : Tensor
+            Backbone representation. Dimensions depend on backbone model
+        ``random_state`` : int, optional
+            Random state, by default None
 
-        Returns:
-            Tensor: Network output (have dimension [batch_size, mean_dim+var_dim]). Mean is first.
+        Returns
+        -------
+        ``Tensor``
+            Network output (have dimension [batch_size, num_classes])
         """
         
         if random_state is not None:
@@ -523,15 +581,20 @@ class ImageClassifierNet_Classic(nn.Module):
         return out
 
     def forward_head_with_swag(self, o: Tensor, rnd_states: int = None) -> Tensor:
-        """ Just as forward_head(), but the mean and variance head are being sampled from SWAG mean
-            and standard deviation tensors
+        """Just as ``forward_head()``, but the mean and variance head are being sampled from SWAG 
+        mean and standard deviation tensors
 
-        Args:
-            o (Tensor): Backbone representation. Dimensions depend on backbone model
-            random_state (int, optional): Random state. [DEFAULT: Use present]
+        Parameters
+        ----------
+        ``o`` : Tensor
+            Backbone representation. Dimensions depend on backbone model
+        ``random_state`` : int, optional
+            Random state, by default None
 
-        Returns:
-            Tensor: Network output (have dimension [batch_size, mean_dim+var_dim]). Mean is first.
+        Returns
+        -------
+        ``Tensor``
+             Network output (have dimension [batch_size, num_classes])
         """
         for j in range(25):
             if rnd_states is not None:
@@ -575,15 +638,24 @@ class ImageClassifierNet_Classic(nn.Module):
 
         This has any effect only on certain modules. See documentations of
         particular modules for details of their behaviors in training/evaluation
-        mode, if they are affected, e.g. :class:`Dropout`, :class:`BatchNorm`,
+        mode, if they are affected, e.g. :class:``Dropout``, :class:``BatchNorm``,
         etc.
 
-        Args:
-            mode (bool, optional): whether to set training mode (True) or evaluation mode (False). 
-                                   [DEFAULT: True].
+        Parameters
+        ----------
+       ``mode`` : bool, optional
+            whether to set training mode (``True``) or evaluation mode (``False``)., by default 
+            ``True``
 
-        Returns:
-            Module: self
+        Returns
+        -------
+        ``nn.Module``
+            self
+
+        Raises
+        ------
+        ``ValueError``
+            ``mode`` must be a boolean value
         """
         if not isinstance(mode, bool):
             raise ValueError("training mode is expected to be boolean")
@@ -596,19 +668,27 @@ class ImageClassifierNet_Classic(nn.Module):
         return self
     
     def eval_with_dropout(self, mode: bool = True) -> nn.Module:
-        """Sets the module in training evaluation mode, but keep dropout active.
-
+        """Sets the module in training evaluation mode, but keep ``Dropout`` active.
+        
         This has any effect only on certain modules. See documentations of
         particular modules for details of their behaviors in training/evaluation
-        mode, if they are affected, e.g. :class:`Dropout`, :class:`BatchNorm`,
+        mode, if they are affected, e.g. :class:``Dropout``, :class:``BatchNorm``,
         etc.
 
-        Args:
-            mode (bool): whether to set training mode (True) or evaluation mode (False). 
-                         [DEFAULT: True].
+        Parameters
+        ----------
+        ``mode`` : bool, optional
+            whether to set evaluation mode with dropout (``True``), by default ``True``
 
-        Returns:
-            Module: self
+        Returns
+        -------
+        ``nn.Module``
+            self
+
+        Raises
+        ------
+        ``ValueError``
+            ``mode`` must be a boolean value
         """
         
         mode_train = not mode
@@ -627,14 +707,28 @@ class ImageClassifierNet_Classic(nn.Module):
         return self
 
 
-def init_network(model_type: str, params: dict):
-    """This function takes in a dictionary of model settings (including type of model),
-       and initalizes a model of the specific type by calling model-specific init_network function
+def init_network(model_type: str, params: dict) -> Union[ImageClassifierNet_BayesianTripletLoss,
+                                                         ImageClassifierNet_Classic]:
+    """This function takes in a dictionary of model settings (including type of model), and 
+    initalizes a model of the specific type by calling model-specific init_network function
 
-    Args:
-        model_type (str): Model type
-        params (dict): Dictionary of model settings
-    
+    Parameters
+    ----------
+    ``model_type`` : str
+        Model type
+    ``params`` : dict
+        Dictionary of model settings
+
+    Returns
+    -------
+    ``Union[ImageClassifierNet_BayesianTripletLoss, ImageClassifierNet_Classic]``
+        Returns either an ``ImageClassifierNet_BayesianTripletLoss`` or an 
+        ``ImageClassifierNet_Classic`` object, depending on the passed ``model_type``
+
+    Raises
+    ------
+    ``ValueError``
+        Checks that the ``model_type`` is either 'BayesianTripletLoss' or 'Classic'
     """
     
     if model_type == 'BayesianTripletLoss':
@@ -647,17 +741,25 @@ def init_network(model_type: str, params: dict):
     return net
 
 
-def init_network_BayesianTripletLoss(params: dict) -> nn.Module:
-    """ This function initalizes a torch nn with a fixed backbone (pretrained) model and a mean and 
-        variance head on top (class type of return is ImageClassifier_BayesianTripletLoss)
+def init_network_BayesianTripletLoss(params: dict) -> ImageClassifierNet_BayesianTripletLoss:
+    """This function initalizes a torch nn with a fixed backbone (pretrained) model and a mean and 
+    variance head on top (class type of return is ``ImageClassifier_BayesianTripletLoss``)
 
-    Args:
-        params (dict): a dict of parameters defining the model structure
+    Parameters
+    ----------
+    ``params`` : dict
+        A dict of parameters defining the model structure
 
-    Returns:
-        net (nn.Module): a torch neural network that has a fixed backbone model (defined in param)
-                         and then a mean and variance head for embedding imgs into a latent metric 
-                         space (class type is ImageClassifier_BayesianTripletLoss)
+    Returns
+    -------
+    ``ImageClassifierNet_BayesianTripletLoss``
+        A torch neural network that has a fixed backbone model (defined in ``param``) and then a 
+        mean and variance head for embedding imgs into a latent metric space
+        
+    Raises
+    ------
+    ``ValueError``
+        Architecture of backbone model must be one of those defined in the ``OUTPUT_DIM`` dict.
     """
 
     # parse params with default values
@@ -734,17 +836,25 @@ def init_network_BayesianTripletLoss(params: dict) -> nn.Module:
     return net
 
 
-def init_network_Classic(params: dict) -> nn.Module:
-    """ This function initalizes a torch nn with a fixed backbone (pretrained) model and a mean and 
-        variance head on top (class type of return is ImageClassifier_Classic)
+def init_network_Classic(params: dict) -> ImageClassifierNet_Classic:
+    """This function initalizes a torch nn with a fixed backbone (pretrained) model and a mean and 
+    variance head on top (class type of return is ``ImageClassifierNet_Classic``)
 
-    Args:
-        params (dict): a dict of parameters defining the model structure
+    Parameters
+    ----------
+    ``params`` : dict
+        A dict of parameters defining the model structure
 
-    Returns:
-        net (nn.Module): a torch neural network that has a fixed backbone model (defined in param)
-                         and then a mean and variance head for embedding imgs into a latent metric 
-                         space (class type is ImageClassifier_Classic)
+    Returns
+    -------
+    ``ImageClassifierNet_Classic``
+        A torch neural network that has a fixed backbone model (defined in ``param``) and then a 
+        head which takes the backbone representations as input and return logits of classes
+        
+    Raises
+    ------
+    ``ValueError``
+        Architecture of backbone model must be one of those defined in the ``OUTPUT_DIM`` dict.
     """
 
     # parse params with default values

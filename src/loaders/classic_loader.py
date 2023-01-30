@@ -5,6 +5,8 @@ import json
 import logging
 import numpy as np
 import multiprocessing
+from typing import Tuple
+from torch import Tensor
 
 # Torch
 import torch
@@ -20,22 +22,28 @@ logger = logging.getLogger('__main__')
 
 
 class Pooling_Dataset(data.Dataset):
-    """ Dataset that loads training and validation images for the classic softmax classifer model
-    
-    Args:
-        mode (string): 'train' or 'val' for training and validation parts of dataset
-        transform (callable, optional): A function/transform that  takes in an PIL image
-            and returns a transformed version. E.g, ``transforms.RandomCrop``
-        poolsize_class (int, Default:200): Number of images per class in pool
-        classes_not_trained_on (list, Default:[]): What classes should we not train on
-     
-     Attributes:
-        update_backbone_repr_pool (func): Update backbone representation of training images
-    """
+    """Dataset that loads training and validation images for the classic softmax classifer model
 
+    Parameters
+    ----------
+    ``mode`` : str
+        'train' or 'val' for training and validation parts of dataset
+    ``poolsize_class`` : int, optional
+        Number of images per class in pool, by default 200
+    ``transform`` : transforms, optional
+        A function/transform that  takes in an PIL image and returns a transformed version. E.g, 
+        ``transforms.RandomCrop``, by default None
+    ``classes_not_trained_on`` : list, optional
+        What classes should we not train on, by default []
+        
+    Attributes
+    ----------
+    ``update_backbone_repr_pool`` : func
+        Update backbone representation of training images
+    """
     def __init__(self, mode: str, poolsize_class:int = 200, transform: transforms=None,
                  classes_not_trained_on: list=[]):
-
+        
         if not (mode == 'train' or mode == 'val' or mode == 'test' or mode == 'trainval'):
             raise(RuntimeError("MODE should be either train, val, test, trainval"))
 
@@ -72,12 +80,18 @@ class Pooling_Dataset(data.Dataset):
         # Init tensors for storing backbone output
         self.backbone_repr = None
 
-    def __getitem__(self, index):
-        """
-        Args:
-            index (int): Index
-        Returns:
-            object (backbone representation), target (one-hot-encoding tensor)
+    def __getitem__(self, index: int) -> Tuple[Tensor,int,str]:
+        """Get item of dataset
+
+        Parameters
+        ----------
+        ``index`` : int
+            Index
+
+        Returns
+        -------
+        ``Tuple[Tensor,int,str]``
+            (Tensor of backbone representation, index of class, class string)
         """
         if self.__len__() == 0:
             raise(RuntimeError("List qidxs is empty. Run ``dataset.create_epoch_tuples(net)`` "+
@@ -200,8 +214,10 @@ class Pooling_Dataset(data.Dataset):
     def update_backbone_repr_pool(self, net: ImageClassifierNet_Classic):
         """Updates pool of backbone representationd of images, which are used in __getitem__()
 
-        Args:
-            net (ImageClassifierNet_Classic): Model network for extracting backbone reprensentations
+        Parameters
+        ----------
+        ``net`` : ImageClassifierNet_Classic
+            Model network for extracting backbone reprensentations
         """
         
         logger.info('\n\n §§§§ Updating pool for *{}* dataset... §§§§\n'.format(self.mode))

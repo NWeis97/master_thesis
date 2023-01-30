@@ -1,3 +1,5 @@
+""" This script contains all performance measuresfor the training_test/test_*.py scripts """
+
 # Imports
 import pandas as pd
 import numpy as np

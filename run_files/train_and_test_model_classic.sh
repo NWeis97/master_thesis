@@ -22,16 +22,19 @@ export R=_Vanilla_new_OODs
 ### SEND NOTIFICATION UPON COMPLETION
 #BSUB -N
 
-rm config_hpc/config${R}.out
-rm config_hpc/config${R}.err
 source init.sh
+if [ -e config_hpc/config${R}.out ]
+then
+    echo "Removing old log files...\n\n"
+    rm config_hpc/config${R}.out
+    rm config_hpc/config${R}.err
+fi
 wandb online
 
 
 # Run model
-#out=( $(python3 src/training_test/train_classic_classifier_model.py --config-filename=training${R}) )
-#model_name=${out[0]}
-model_name="jumping-totem-3455"
+out=( $(python3 src/training_test/train_classic_classifier_model.py --config-filename=training${R}) )
+model_name=${out[0]}
 
 # Test model
 export R=1
@@ -39,7 +42,7 @@ export model_database=TRAINVAL
 export test_dataset=test
 
 # run tests
-#python3 src/training_test/test_classic_classifier_model.py --model-name=${model_name} --model-database=${model_database} --test-dataset=${test_dataset} --calibration_method='None'
-#ython3 src/training_test/test_classic_classifier_model.py --model-name=${model_name} --model-database=${model_database} --test-dataset=${test_dataset} --calibration_method='TempScaling'
+python3 src/training_test/test_classic_classifier_model.py --model-name=${model_name} --model-database=${model_database} --test-dataset=${test_dataset} --calibration_method='None'
+python3 src/training_test/test_classic_classifier_model.py --model-name=${model_name} --model-database=${model_database} --test-dataset=${test_dataset} --calibration_method='TempScaling'
 python3 src/training_test/test_classic_classifier_model.py --model-name=${model_name} --model-database=${model_database} --test-dataset=${test_dataset} --calibration_method='MCDropout'
-#python3 src/training_test/test_classic_classifier_model.py --model-name=${model_name} --model-database=${model_database} --test-dataset=${test_dataset} --calibration_method='SWAG'
+python3 src/training_test/test_classic_classifier_model.py --model-name=${model_name} --model-database=${model_database} --test-dataset=${test_dataset} --calibration_method='SWAG'

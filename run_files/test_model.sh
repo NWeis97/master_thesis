@@ -7,7 +7,7 @@ export balanced_dataset=-1350
 export test_dataset=test
 export num_NN=675
 export num_MC=3000
-export method=min_dist_NN
+export method=mixed
 export with_OOD=False
 export dist_classes=nn
 export calibration_method=SWAG
@@ -24,8 +24,8 @@ export calibration_method=SWAG
 ### NAME OF FILE
 #BSUB -J config_test1
 ### OUTPUT AND ERROR FILE
-#BSUB -o config_hpc/config_test1.out
-#BSUB -e config_hpc/config_test1.err
+#BSUB -o ../config_hpc/config_test1.out
+#BSUB -e ../config_hpc/config_test1.err
 ### QUEUE TO BE USED
 #BSUB -q gpuv100
 ### gpu memory
@@ -43,9 +43,13 @@ export calibration_method=SWAG
 ### SEND NOTIFICATION UPON COMPLETION
 #BSUB -N
 
-rm config_hpc/config_test${R}.out
-rm config_hpc/config_test${R}.err
 source init.sh
+if [ -e config_hpc/config_test${R}.out ]
+then
+    echo "Removing old log files...\n\n"
+    rm config_hpc/config_test${R}.out
+    rm config_hpc/config_test${R}.err
+fi
+wandb online
 
-python3 src/training_test/test_classifier_model3.py --model-name=${model_name} --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN} --num-MC=${num_MC} --method=${method} --with_OOD=${with_OOD} --dist_classes=${dist_classes} --calibration_method=${calibration_method}
-#python3 src/training_test/test_classifier_model.py --model-name=${model_name} --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN} --num-MC=${num_MC} --method='min_dist_NN' --with_OOD=${with_OOD} --dist_classes=${dist_classes} --calibration_method=${calibration_method}
+python3 src/training_test/test_classifier_model.py --model-name=${model_name} --model-database=${model_database} --balanced-dataset=${balanced_dataset} --test-dataset=${test_dataset} --num-NN=${num_NN} --num-MC=${num_MC} --method=${method} --with_OOD=${with_OOD} --dist_classes=${dist_classes} --calibration_method=${calibration_method}

@@ -1,3 +1,6 @@
+""" This script trains a classic classifier model. Updates and run statistics are saved to WandB,
+so in order to make full use of this script, WandB is recommended"""
+
 # Standard libraries
 import wandb
 import json

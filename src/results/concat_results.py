@@ -1,3 +1,8 @@
+""" This script extract all saved information from the tests of the models and creates 
+visualizations. This scripts is not "pretty", and works more like a notebook. However, extraction
+method of saved metrics (saved in folder "./reports/test_results) can be reused. 
+"""
+
 # Imports
 import numpy as np
 import pandas as pd

@@ -3,6 +3,7 @@ import json
 import os
 import numpy as np
 import pandas as pd
+from pandas import DataFrame
 from numpy.random import noncentral_chisquare
 from torchvision import transforms
 from torch_scatter import scatter_sum
@@ -11,6 +12,8 @@ import pdb
 from os.path import exists
 import multiprocessing
 import cv2
+from typing import Tuple
+from torch import Tensor
 
 # Load own libs
 from src.loaders.generic_loader import ObjectsFromList, image_object_loader
@@ -21,14 +24,32 @@ logger = get_logger_test('__main__')
 
 
 class ImageClassifier():
-    
+    """A basic image classificer class. Both the BTL image classifier and classic classifier
+    inherent methods from this class.
+
+    Parameters
+    ----------
+    ``model_name`` : str
+        Name of model
+    ``model_type`` : str
+        Model type ('BayesianTripletLoss' or 'Classic')
+    ``params`` : dict
+        Dict containing information of model structure
+    ``model_data`` : str
+        Data model is trained on (either 'TRAIN' or 'TRAINVAL')
+    ``with_OOD`` : bool, optional
+        Should OOD samples be included?, by default False
+    ``calibration_method`` : str, optional
+        Calibration method (Either 'None', 'MCDropout', 'SWAG', 'TempScaling', or 'Ensemble'), by 
+        default 'None'
+    """
+        
     def __init__(self, model_name: str,
                  model_type: str,
                  params: dict,
                  model_data: str,
                  with_OOD: bool = False,
                  calibration_method: str = 'None'):
-        
         # *****************************************
         # ******** Initialize model data **********
         # *****************************************
@@ -130,36 +151,6 @@ class ImageClassifier():
             for i in range(len(self.classes)):
                 if self.classes[i] in self.classes_not_trained_on:
                     self.classes[i] = self.classes[i] + '_OOD'
-               
-    def _create_db_for_model_data_(self):
-        if self.model_data == 'TRAIN':
-            db_root = os.path.join(self.data_root, 'train.json')
-            # Load database
-            f = open(db_root)
-            db = json.load(f)
-            f.close()
-            
-        elif self.model_data == 'TRAINVAL':
-            db_root_train = os.path.join(self.data_root, 'train.json')
-            db_root_val = os.path.join(self.data_root, 'val.json')
-            
-            # Load database
-            f = open(db_root_train)
-            db = json.load(f)
-            f.close()
-            f = open(db_root_val)
-            db_val = json.load(f)
-            f.close()
-            
-            # Concat databases
-            for k in db.keys():
-                db[k].extend(db_val[k])
-        
-        else:
-            logger.error('Unknown model_data input (use either TRAIN or TRAINVAL)')
-            exit;
-
-        return db
        
     def __repr__(self):
         tmpstr = super(ImageClassifier, self).__repr__()[:-1]
@@ -176,7 +167,9 @@ class ImageClassifier():
         tmpstr = tmpstr + '  )\n'
         return tmpstr
         
-    def _extract_test_dataset_(self, test_dataset: str = 'test'):
+    def _extract_test_dataset_(self, test_dataset: str = 'test') -> (Tuple[list[str],
+                                                                           list[list],
+                                                                           list[str]]):
         # Extract test dataset
         db_root = os.path.join(self.data_root, f'{test_dataset}.json')
         f = open(db_root)
@@ -220,17 +213,8 @@ class ImageClassifier():
         for i in range(len(classes)):
             if classes[i] in self.classes_not_trained_on:
                 classes[i] = classes[i] + '_OOD'
-        #if self.with_OOD == True:
-            
-        #else:
-        #    idx_trained_on = [i for i in range(len(classes)) if classes[i] 
-        #                                                    not in self.classes_not_trained_on]
-        #    objects = [objects[i] for i in idx_trained_on]
-        #    bboxs = [bboxs[i] for i in idx_trained_on]
-        #    classes = [classes[i] for i in idx_trained_on]
             
         return objects, bboxs, classes
-    
     
     def _create_dict_of_class_idxs_(self):
         # Split classes into list with indices of positions
@@ -245,12 +229,80 @@ class ImageClassifier():
         self.num_samples_classes = ({class_: len(self.classes_idxs[class_]) for class_ in 
                                                self.classes_idxs.keys()})
     
+    def _create_db_for_model_data_(self):
+        if self.model_data == 'TRAIN':
+            db_root = os.path.join(self.data_root, 'train.json')
+            # Load database
+            f = open(db_root)
+            db = json.load(f)
+            f.close()
+            
+        elif self.model_data == 'TRAINVAL':
+            db_root_train = os.path.join(self.data_root, 'train.json')
+            db_root_val = os.path.join(self.data_root, 'val.json')
+            
+            # Load database
+            f = open(db_root_train)
+            db = json.load(f)
+            f.close()
+            f = open(db_root_val)
+            db_val = json.load(f)
+            f.close()
+            
+            # Concat databases
+            for k in db.keys():
+                db[k].extend(db_val[k])
+        
+        else:
+            logger.error('Unknown model_data input (use either TRAIN or TRAINVAL)')
+            exit
+
+        return db
+    
     def get_probability_dist_dataset(self):
         raise NotImplementedError
 
 
 class ImageClassifier_BayesianTripletLoss(ImageClassifier):
+    """The Bayesian Triplet Loss Image classifier model. Has embeddings of training data and can 
+        classify and calculate probability distribution for unknown object over objects in the
+        model database.
+
+    Parameters
+    ----------
+    ``model_name`` : str
+        model name (path to params and state_dict should be in ./models/params and 
+        ./models/state_dict respectively, with names {``model_name``}.pt and {``model_name``}.
+        json)
+    ``model_type`` : str
+        Model type ('BayesianTripletLoss' or 'Classic')
+    ``params`` : dict
+        Dict containing information of model structure (found in ./models/params after training)
+    ``model_data`` : str
+        Data model is trained on (either 'TRAIN' or 'TRAINVAL')
+    ``with_OOD`` : bool, optional
+        Should OOD samples be included?, by default False
+    ``balanced_classes`` : int, optional
+        If ``x = 0``, then no balancing. If ``x > 0`` then balancing to x number of samples for 
+        all classes. If ``x < 0`` then upsampling such that all classes at least have x samples. 
+        By default 0
+    ``calibration_method`` : str, optional
+        Calibration method (Either 'None', 'MCDropout', 'SWAG', 'TempScaling', or 'Ensemble').
+        By default 'None'
+
+    Attributes
+    ----------
+    ``get_probability_dist_dataset`` : func
+        Get probability distribution of all samples in a given dataset
+        
     
+    
+    Raises
+    ------
+    ``ValueError``
+        If calibration method is 'SWAG', but the model was trained with param 
+        ``with_swag=False``.
+    """
     def __init__(self, model_name: str,
                  model_type: str,
                  params: dict,
@@ -258,18 +310,6 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
                  with_OOD: bool = False,
                  balanced_classes: int = 0,
                  calibration_method: str = 'None'):
-        """Image classifier model. Has embeddings of training data and can classify and calculate
-           probability disitrbution for unknown object over objects trained on.
-
-        Args:
-            model (str): model name (path to params and state_dict should be in ./models/params and 
-                         ./models/state_dict respectively, with names {model}.pt and {model}.json)
-            model_data (str): TRAIN or TRAINVAL (use either training data or training and val data)
-            balanced_classes (str): Determines whether or not upsampling (with data augmentation)
-                                    and downsampling should be used in order to get 
-                                    'balanced_classes' number of objects for each class.
-                                    Defaults to 0 (no balancing of data).
-        """
         super().__init__(model_name, model_type, params, model_data, with_OOD,calibration_method)
         self.balanced_classes = balanced_classes
         
@@ -285,7 +325,7 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
             torch.save(self.vars,file_name+'vars.pt')
             torch.save(self.classes,file_name+'classes.pt')
         else:
-            if False:#((self.calibration_method == 'SWAG') | (self.calibration_method == 'MCDropout')):
+            if ((self.calibration_method == 'SWAG') | (self.calibration_method == 'MCDropout')):
                 logger.info('SWAG and MCDropout calibration need backbone representations... Loading them first')
                 self.means, self.vars, self.backbone_repr, self.classes = self._extract_means_and_variances_()
             
@@ -322,25 +362,35 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
                                            num_MC: int = 10000,
                                            method: str = 'min_dist_NN',
                                            dist_classes: str = 'unif',
-                                           temp: float = None):
-        """Calculates the probability distributiuon over classes trained on for a set of images
-           defined by 'test_dataset'. Name of 'test_dataset' should be present in data/processed/.
+                                           temp: float = None) -> Tuple[DataFrame,
+                                                                        list[str],
+                                                                        list[list[int]],
+                                                                        list[str]]:
+        """Extract probability distribution for all samples in a dataset. 
 
-        Args:
-            test_dataset (str, optional): Name of test dataset (json file). Defaults to 'test'.
-            num_NN (int, optional): Number of nearest objects to base probs on. Defaults to 100.
-            num_MC (int, optional): Number of Monte Carlo samples. Defaults to 10000.
-            method (str, optional): Determines how the probabilities are calculated. Choose between
-                                    min_dist_NN: Based on num_NN nearest neighbours, sample num_MC
-                                                 distances from anchor to NN's and note the class
-                                                 with smallest distance. Accumulate on class level.
-                                                 Propertion of class noted approximates probability
-                                    kNN-gauss-kernel: ---- 
+        Parameters
+        ----------
+        ``test_dataset`` : str, optional
+            The test dataset. Choose either 'train', 'val', or 'test'. By default 'test'
+        ``num_NN`` : int, optional
+            Number of nearest neighbours for given method, by default 100
+        ``num_MC`` : int, optional
+            Number of Monte Carlo samples for the 'min_dist_NN' method, by default 10000
+        ``method`` : str, optional
+            Probability extraction method. Choose either 'min_dist_NN' or 'kNN_gauss_kernel'. By 
+            default 'min_dist_NN'
+        ``dist_classes`` : str, optional
+            For the 'kNN_gauss_kernel' method how should the NNs be selected. Choose either 'unif',
+            'nn', or 'all'. By default 'unif'
+        ``temp`` : float, optional
+            When using the temperature scaling calibration method, what should the quantile scaling
+            be?. By default None
 
-        Returns:
-            probs_df (pd.DataFrame): Pandas dataframe containing the probability dist over classes
-                                     for all samples in the test dataset
-            classes (list):          List of true classes 
+        Returns
+        -------
+        ``Tuple[DataFrame, list[str], list[list[int]], list[str]]``
+            [Pandas DataFrame with probability disitrbution over entire dataset, list of object
+            names, list of bounding boxes, list of classes]
         """
         # Extract test dataset
         objects, bboxs, classes = self._extract_test_dataset_(test_dataset)
@@ -378,24 +428,32 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
             else:
                 mean_dim = int(self.params['dim_out']/2)
                 var_dim = int(self.params['dim_out']/2)
-                
+            
+            # Init storage
             mean_embs = torch.zeros(mean_dim, len(classes)).cuda()
             var_embs = torch.zeros(var_dim,len(classes)).cuda()
             blurriness = torch.zeros(len(classes)).cuda()
             
+            # Seeds for (more) effective MC Dropout and SWAG implementation
             torch.manual_seed(self.params['seed'])
             self.rnd_states = torch.randperm(100000000)[:100]
+            
+            # Extract probs
             for i in range(len(classes)):
                 probs, mean_emb, var_emb, blurry = self._get_probability_dist_(objects[i],
                                                                        bboxs[i],
                                                                        num_NN,
                                                                        num_MC,
                                                                        method,
-                                                                       dist_classes)
+                                                                       dist_classes,
+                                                                       temp)
                 if method == 'mixed':
-                    probs_df_min[i] = np.round(np.array(list(probs[0].values())),int(np.log10(num_MC)+1))
-                    probs_df_gauss[i] = np.round(np.array(list(probs[1].values())),int(np.log10(num_MC)+1))
-                    probs_df_mixed[i] = np.round(np.array(list(probs[2].values())),int(np.log10(num_MC)+1))
+                    probs_df_min[i] = np.round(np.array(list(probs[0].values())),
+                                               int(np.log10(num_MC)+1))
+                    probs_df_gauss[i] = np.round(np.array(list(probs[1].values())),
+                                                 int(np.log10(num_MC)+1))
+                    probs_df_mixed[i] = np.round(np.array(list(probs[2].values())),
+                                                 int(np.log10(num_MC)+1))
                 else:
                     probs_df[i] = np.round(np.array(list(probs.values())),int(np.log10(num_MC)+1))
                     
@@ -406,7 +464,7 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
                 if (i+1) % 100 == 0:
                     logger.info('>>>> {}/{} done... '.format(i+1, len(classes)))
                     
-            # Save dataframe to reports (for later use)
+            # Save probability dataframe to reports
             if method == 'mixed':
                 file_name = self._get_test_file_storing_name_(num_NN,num_MC,'min_dist_NN',
                                                       test_dataset,dist_classes)
@@ -437,8 +495,28 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
         
         return probs_df, objects, bboxs, classes
     
-    def get_embeddings_of_test_dataset(self, test_dataset):
-        
+    
+    
+    def get_embeddings_of_test_dataset(self, test_dataset: str = 'test') -> Tuple[Tensor,
+                                                                                  Tensor,
+                                                                                  float]:
+        """_summary_
+
+        Parameters
+        ----------
+        ``test_dataset`` : str, optional
+            The test dataset. Choose either 'train', 'val', or 'test'. By default 'test'
+
+        Returns
+        -------
+        ``Tuple[Tensor, Tensor, float]``
+            Of all images in dataset: (Mean, Variance, Blurriness)
+
+        Raises
+        ------
+        ``RuntimeError``
+            You have to call ``get_probability_dist_dataset`` before you can get embeddings!
+        """
         file_name = self._get_embedding_file_storing_name_()
         file_name_embs = f'./reports/embeddings_test/' + file_name + f'_{test_dataset}'
         if exists(file_name_embs + '_means.pt'):
@@ -458,15 +536,23 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
     # --------------------------------------------------------------------------------------------
     # ----------------------------------- Privat functions ---------------------------------------
     # -------------------------------------------------------------------------------------------- 
-    def _get_embedding_(self, img_name: str, bbox: list):
+    def _get_embedding_(self, img_name: str, bbox: list[int]) -> Tuple[Tensor,
+                                                                       Tensor,
+                                                                       Tensor,
+                                                                       float]:
         """Get model embeddings of image
 
-        Args:
-            img_path (str): image name
-            bbox (list): bbox of object
+        Parameters
+        ----------
+        ``img_name`` : str
+            Image file-name
+        ``bbox`` : list[int]
+            Bbox of object
 
-        Returns:
-            mean_emb, var_emb: mean and variance embedding of image
+        Returns
+        -------
+        ``Tuple[Tensor, Tensor, Tensor, float]``
+            Images in dataset: (Mean, Variance, Backbone_representation, Blurriness)
         """
         img_path = self.ims_root + f'/{img_name}'
         img = image_object_loader(img_path,bbox,self.transformer)
@@ -493,26 +579,52 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
         
         return mean_emb, var_emb, backbone_emb, blurry
 
-    def _get_probability_dist_(self, img_name: str, 
-                                   bbox: list, 
-                                   num_NN: int = 100, 
-                                   num_MC: int = 10000,
-                                   method: str = 'min_dist_NN',
-                                   dist_classes: str = 'unif'):
-        """Get probability distribution over model classes for an input image (defined by path
-           and bounding box). The probability distribution will be based on num_NN nearest neighbors
-           in the embedding space. For each nearest neighbour the probability that it is the
-           closest object in the embedding space will be calculated (based on num_MC samples), and
-           then accumulated on class level. 
-           Note that the euclidian distance between gaussian disitrbuted r.v. with mean different
-           from 0 and variance different from 1 follows a scaled non-centered chi-sq distribution.
 
-        Args:
-            img_path (str): image name
-            bbox (list): bbox of object on image
-            num_NN (int, optional): Number of nearest objects to base probs on. Defaults to 100.
-            num_MC (int, optional): Number of Monte Carlo samples. Defaults to 10000.
-            method (str. optional): See description under function for get_probability_dist_dataset
+    def _get_probability_dist_(self, img_name: str, 
+                                   bbox: list[int], 
+                                   num_NN: int = 100, 
+                                   num_MC: int = 3000,
+                                   method: str = 'min_dist_NN',
+                                   dist_classes: str = 'nn',
+                                   temp: float = None) -> dict:
+        """Get probability distribution over class space of model for a single image. The 
+        probabilities are calculated in one of two ways, either using the ``min_dist_NN`` or
+        ``kNN_gauss_kernel`` method.
+
+        Parameters
+        ----------
+        ``img_name`` : str
+            Image file-name
+        ``bbox`` : list[int]
+            Bounding box of object in image 
+        ``num_NN`` : int, optional
+            Number of Nearest Neighbours. Not used if ``method='kNN_gauss_kernel'`` and 
+            ``dist_classes='all'``. By default 100
+        ``num_MC`` : int, optional
+            Number of Monte Carlo samples. Not used if ``method='kNN_gauss_kernel'``. By default 
+            3000
+        ``method`` : str, optional
+            Probabilty extraction method. Choose either 'min_dist_NN', 'kNN_gauss_kernel', or the
+            average of those two methods 'mixed', by default 'min_dist_NN'
+        ``dist_classes`` : str, optional
+            When ``method='kNN_gauss_kernel'``, what samples should be considered. Either 'all'
+            for entire model database, 'nn' for nearest neighbours, or 'unif' for uniformly with the
+            min(|c|, for c in 1..C) nearest neighbors of each class, by default 'nn'.
+        ``temp`` : float, optional
+            When using the temperature scaling calibration method, what should the quantile scaling
+            be?. By default None
+
+        Returns
+        -------
+        ``dict``
+            Probability distribution over class-space
+
+        Raises
+        ------
+        ``ValueError``
+            ``method`` should either be 'min_dist_NN', 'kNN_gauss_kernel', or 'mixed'
+        ``ValueError``
+            Check if calibration method has been implemented.
         """
         
         # Get embeddings
@@ -524,13 +636,13 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
                 _, ranks = torch.sort(dist, dim=0, descending=False)
                 
                 if method == 'min_dist_NN':    
-                    probs = self._min_dist_NN_test_stability_(ranks, mean_emb, var_emb, num_NN, num_MC)
-                    #probs = self._min_dist_NN_(ranks, mean_emb, var_emb, num_NN, num_MC)
+                    probs = self._min_dist_NN_(ranks, mean_emb, var_emb, num_NN, num_MC)
                 elif method == 'kNN_gauss_kernel':
                     probs = self._kNN_gauss_kernel_(ranks, mean_emb, var_emb, num_NN, dist_classes)
                 elif method == 'mixed':
                     probs_min = self._min_dist_NN_(ranks, mean_emb, var_emb, num_NN, num_MC)
-                    probs_gauss = self._kNN_gauss_kernel_(ranks, mean_emb, var_emb, num_NN*10, dist_classes)
+                    probs_gauss = self._kNN_gauss_kernel_(ranks, mean_emb, var_emb, num_NN*10, 
+                                                          dist_classes)
                     
                     probs_mixed = {key:0 for key in probs_min.keys()}
                     for key in probs_mixed:
@@ -560,7 +672,8 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
                 with torch.no_grad():
                     if self.calibration_method == 'SWAG':
                         if (self.out_rand_init is False):
-                            out = self.model.forward_head_with_swag(self.backbone_repr,self.rnd_states[j])
+                            out = self.model.forward_head_with_swag(self.backbone_repr,
+                                                                    self.rnd_states[j])
                         out_emb = self.model.forward_head_with_swag(backbone_emb,self.rnd_states[j])
                     else:
                         if (self.out_rand_init is False):
@@ -623,7 +736,8 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
             else:  
                 probs = probs_swag
         else:
-            raise ValueError(f"{self.calibration_method} calibration method is not implemented for this model type")
+            raise ValueError(f"{self.calibration_method} calibration method is not implemented for"+
+                             " this model type")
         
         # reset seed to original
         torch.manual_seed(self.params['seed'])
@@ -633,6 +747,8 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
             self.model.eval()
             
         return probs, mean_emb, var_emb, blurriness
+    
+    
     
     def _extract_means_and_variances_(self): 
         OFL = ObjectsFromList(root=self.ims_root, 
@@ -757,10 +873,10 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
                                 logger.info('>>>> {}/{} done... '.format(count, num_samples))
                                 
                         if count == num_samples:
-                            break;
+                            break
                         
                     if count == num_samples:
-                        break;
+                        break
             
             # *****************************
             # *** Upsampling to minimum ***
@@ -838,11 +954,12 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
                                 logger.info('>>>> {}/{} done... '.format(count, num_samples))
                                 
                         if count == num_samples:
-                            break;
+                            break
                     if count == num_samples:
-                        break;
+                        break
         
         return qvecs, qvars, backbone_repr, classes
+    
     
     def _get_test_file_storing_name_(self,num_NN,
                                      num_MC,
@@ -898,7 +1015,43 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
                      f'varType-{self.model.var_type}_')
         return file_name
     
-    def _min_dist_NN_(self, ranks, mean_emb, var_emb, num_NN, num_MC, means_NN=None, vars_NN=None):
+    def _min_dist_NN_(self, ranks: list, mean_emb: Tensor, var_emb: Tensor, num_NN: int, 
+                            num_MC: int, means_NN: Tensor = None, vars_NN: Tensor = None,
+                            temp: float = None) -> dict:
+        """This probability extraction method estimates the probability that a certain 
+        class c contains the most similar samples to the query. It is done so by Monte Carlo 
+        sampling, for which each MC iteration we sample a distance from all the NNs to the query, 
+        and then find the NN (x) with the smallest distance and then add 1 to the class counter of 
+        x. The probability of each class is then defined as the fractional count.
+
+        Parameters
+        ----------
+        ``ranks`` : list
+            List of indecies for samples in model database sorted by those most similar to query 
+            image
+        ``mean_emb`` : Tensor
+            Mean embedding of query image
+        ``var_emb`` : Tensor
+            Variance embedding of query image
+        ``num_NN`` : int
+            Number of nearest neighbours to consider
+        ``num_MC`` : int
+            Number of Monte Carlo samples to consider
+        ``means_NN`` : Tensor, optional
+            In the case the means of all NNs in the model database is already known, one can pass
+            these directly to the function. By default None
+        ``vars_NN`` : Tensor, optional
+            In the case the vars of all NNs in the model database is already known, one can pass
+            these directly to the function. By default None
+        ``temp`` : float, optional
+            When using the temperature scaling calibration method, what should the quantile scaling
+            be?. By default None
+
+        Returns
+        -------
+        ``dict``
+            Probability distribution over class-space for query image
+        """
         # extract num_NN nearest neighbours
         ranks = ranks[:num_NN]
         # Extract means, variance, and classes
@@ -914,13 +1067,18 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
                                    .reshape(mean_emb.shape[0],))
         
         emb_samples = torch.distributions.Normal(mean_emb,var_emb).rsample(torch.Size((num_MC,)))
-        rank_samples = (torch.distributions.Normal(means_NN.T.flatten(),vars_NN.T.flatten()).rsample(torch.Size((num_MC,)))
+        rank_samples = (torch.distributions.Normal(means_NN.T.flatten(),vars_NN.T.flatten())
+                                                  .rsample(torch.Size((num_MC,)))
                                                   .reshape(num_MC,mean_emb.shape[0],-1))
         
         rank_samples = rank_samples.permute(2, 0, 1)
         dist_to_NN = (torch.sub(rank_samples,emb_samples)).pow(2).sum(2)
     
-        """ OLD
+        """ OLD - below we sample the distances directly from the true noncentral_chisquare 
+        distribution. However experimentatlly, using _min_dist_NN_test_time_sampling_(), shows that
+        this procedure is slower than sampling the point embeddings and calculating the Euclidean 
+        distance directly.
+        
         # Calc scaled non-centered chi-sq dists parameters
         scaling = var_emb + vars_NN
         delta = (mean_emb - means_NN.T).T
@@ -943,13 +1101,10 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
         
         if self.calibration_method == 'TempScaling':
             get_ID_idx = ['_OOD' not in self.classes[i] for i in range(len(self.classes))]
-            if self.params['var_type'] == 'iso':
-                temp = self.vars[:,get_ID_idx].mean(axis=0).quantile(0.600)
-            else:
-                temp = self.vars[:,get_ID_idx].mean(axis=0).quantile(0.550)
+            temp_val = self.vars[:,get_ID_idx].mean(axis=0).quantile(temp)
             probs_w = np.array([probs[i] for i in probs.keys()])
             probs_w = np.log(probs_w+1e-4)
-            probs_w = probs_w/(var_emb.mean()/temp).cpu().numpy()
+            probs_w = probs_w/(var_emb.mean()/temp_val).cpu().numpy()
             probs_w = torch.softmax(torch.Tensor(probs_w),axis=0)
             
             probs = {key:0 for key in np.unique(self.classes)}
@@ -960,7 +1115,40 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
     
     
        
-    def _kNN_gauss_kernel_(self, ranks, mean_emb, var_emb, num_NN, dist_classes = 'all', means_NN=None, vars_NN=None):
+    def _kNN_gauss_kernel_(self, ranks: list, mean_emb: Tensor, var_emb: Tensor, num_NN: int, 
+                           dist_classes: str = 'all', means_NN: Tensor = None, 
+                           vars_NN: Tensor = None, temp: float = None) -> dict:
+        """This probability extraction method estimates the probability that a certain 
+        class c contains the most similar samples using a Gaussian kernel principle.
+
+        Parameters
+        ----------
+        ``ranks`` : list
+            List of indecies for samples in model database sorted by those most similar to query 
+            image
+        ``mean_emb`` : Tensor
+            Mean embedding of query image
+        ``var_emb`` : Tensor
+            Variance embedding of query image
+        ``num_NN`` : int
+            Number of nearest neighbours to consider
+        ``num_MC`` : int
+            Number of Monte Carlo samples to consider
+        ``means_NN`` : Tensor, optional
+            In the case the means of all NNs in the model database is already known, one can pass
+            these directly to the function. By default None
+        ``vars_NN`` : Tensor, optional
+            In the case the vars of all NNs in the model database is already known, one can pass
+            these directly to the function. By default None
+        ``temp`` : float, optional
+            When using the temperature scaling calibration method, what should the quantile scaling
+            be?. By default None
+
+        Returns
+        -------
+        ``dict``
+            Probability distribution over class-space for query image
+        """
         if means_NN is None:
             # Extract database images of interest
             if dist_classes=='unif':
@@ -1035,13 +1223,10 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
             
         if self.calibration_method == 'TempScaling':
             get_ID_idx = ['_OOD' not in self.classes[i] for i in range(len(self.classes))]
-            if self.params['var_type'] == 'iso':
-                temp = self.vars[:,get_ID_idx].mean(axis=0).quantile(0.625)
-            else:
-                temp = self.vars[:,get_ID_idx].mean(axis=0).quantile(0.600)
+            temp_val = self.vars[:,get_ID_idx].mean(axis=0).quantile(temp)
             probs_w = np.array([probs[i] for i in probs.keys()])
             probs_w = np.log(probs_w+1e-4)
-            probs_w = probs_w/(var_emb.mean()/temp).cpu().numpy()
+            probs_w = probs_w/(var_emb.mean()/temp_val).cpu().numpy()
             probs_w = torch.softmax(torch.Tensor(probs_w),axis=0)
             
             probs = {key:0 for key in np.unique(self.classes)}
@@ -1092,7 +1277,6 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
         t_gaus_1 = time.time()
         
         return t_dist_1-t_dist_0, t_gaus_1-t_gaus_0
-    
     
     def _min_dist_NN_test_stability_(self, ranks, mean_emb, var_emb, num_NN, num_MC, means_NN=None, vars_NN=None):
         # extract num_NN nearest neighbours
@@ -1176,19 +1360,35 @@ class ImageClassifier_BayesianTripletLoss(ImageClassifier):
     
     
 class ImageClassifier_Classic(ImageClassifier):
-    
+    """An image classificer class for the classic vanilla softmax classifier. 
+
+    Parameters
+    ----------
+    ``model_name`` : str
+        Name of model
+    ``model_type`` : str
+        Model type ('BayesianTripletLoss' or 'Classic')
+    ``params`` : dict
+        Dict containing information of model structure
+    ``model_data`` : str
+        Data model is trained on (either 'TRAIN' or 'TRAINVAL')
+    ``with_OOD`` : bool, optional
+        Should OOD samples be included?, by default False
+    ``calibration_method`` : str, optional
+        Calibration method (Either 'None', 'MCDropout', 'SWAG', 'TempScaling', or 'Ensemble'), by 
+        default 'None'
+        
+    Raises
+    ------
+    ``ValueError``
+        If calibration method is 'SWAG', but the model was trained with param 
+        ``with_swag=False``.
+    """
     def __init__(self, model_name: str,
                  model_type: str,
                  params: dict,
                  model_data: str,
                  calibration_method: str):
-        """Image classifier model. Classic 
-
-        Args:
-            model (str): model name (path to params and state_dict should be in ./models/params and 
-                         ./models/state_dict respectively, with names {model}.pt and {model}.json)
-            model_data (str): TRAIN or TRAINVAL (use either training data or training and val data).
-        """
         super().__init__(model_name, model_type, params, model_data,False,calibration_method)
         self._create_dict_of_class_idxs_()
         all_classes = ['train','cow','tvmonitor','boat','cat','person','aeroplane','bird',
@@ -1208,17 +1408,22 @@ class ImageClassifier_Classic(ImageClassifier):
         
 
         
-    def get_probability_dist_dataset(self, test_dataset: str):
-        """Calculates the probability distributiuon over classes trained on for a set of images
-           defined by 'test_dataset'. Name of 'test_dataset' should be present in data/processed/.
+    def get_probability_dist_dataset(self, test_dataset: str = 'test') -> Tuple[DataFrame, 
+                                                                                list[str], 
+                                                                                list[list[int]], 
+                                                                                list[str]]:
+        """Extract probability distribution for all samples in a dataset. 
+        
+        Parameters
+        ----------
+        ``test_dataset`` : str
+            The test dataset. Choose either 'train', 'val', or 'test'. By default 'test'
 
-        Args:
-            test_dataset (str, optional): Name of test dataset (json file). Defaults to 'test'.
-
-        Returns:
-            probs_df (pd.DataFrame): Pandas dataframe containing the probability dist over classes
-                                     for all samples in the test dataset
-            classes (list):          List of true classes 
+        Returns
+        -------
+        ``Tuple[DataFrame, list[str], list[list[int]], list[str]]``
+            [Pandas DataFrame with probability disitrbution over entire dataset, list of object
+            names, list of bounding boxes, list of classes]
         """
         # Extract test dataset
         objects, bboxs, classes = self._extract_test_dataset_(test_dataset)
@@ -1326,6 +1531,36 @@ def init_classifier_model(model: str,
                           with_OOD: bool = False,
                           balanced_classes: int = 0,
                           calibration_method = 'None'):
+    """This function initializes one of two classifier classes, 
+    ``ImageClassifier_BayesianTripletLoss`` or ``ImageClassifier_Classic``, depending on the model
+    used.
+
+    Parameters
+    ----------
+    ``model`` : str
+        Name of model. Depending on the model type, an ``ImageClassifier_BayesianTripletLoss``- or 
+        ``ImageClassifier_Classic``-class is initialized
+    ``model_data`` : str
+        Data model is trained on (either 'TRAIN' or 'TRAINVAL')
+    ``with_OOD`` : bool, optional
+        Should OOD samples be included?, by default False
+    ``balanced_classes`` : int, optional
+        Only used for the ``ImageClassifier_BayesianTripletLoss``-class. See class for specifics.
+        By default 0
+    ``calibration_method`` : str, optional
+        Calibration method (Either 'None', 'MCDropout', 'SWAG', 'TempScaling', or 'Ensemble'), by 
+        default 'None'
+
+    Returns
+    -------
+    _type_
+        _description_
+
+    Raises
+    ------
+    ValueError
+        _description_
+    """
     # Load model params
     f = open(f'./models/params/{model}.json',)
     params = json.load(f)

@@ -1,7 +1,8 @@
 Master Thesis
 ==============================
 
-A master thesis project caiming to build a Bayesian Deep Metric Learning model for quantifying uncertainty inn semantic segmentation
+A master thesis project aiming to build a Bayesian Deep Metric Learning model for quantifying 
+uncertainty in image classification
 
 Project Organization
 ------------

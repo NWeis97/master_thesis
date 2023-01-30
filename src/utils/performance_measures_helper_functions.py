@@ -1,3 +1,5 @@
+""" This script contains helper functions for the performance_measures.py script """
+
 # Imports
 import numpy as np
 import pandas as pd

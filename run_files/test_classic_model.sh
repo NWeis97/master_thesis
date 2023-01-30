@@ -34,8 +34,13 @@ export calibration_method=Ensemble
 ### SEND NOTIFICATION UPON COMPLETION
 #BSUB -N
 
-rm config_hpc/config_test_classic${R}.out
-rm config_hpc/config_test_classic${R}.err
 source init.sh
+if [ -e config_hpc/config_test_classic${R}.out ]
+then
+    echo "Removing old log files...\n\n"
+    rm config_hpc/config_test_classic${R}.out
+    rm config_hpc/config_test_classic${R}.err
+fi
+
 
 python3 src/training_test/test_classic_classifier_model.py --model-name=${model_name} --model-database=${model_database} --test-dataset=${test_dataset} --calibration_method=${calibration_method}

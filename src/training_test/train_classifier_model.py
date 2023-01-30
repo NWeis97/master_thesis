@@ -1,3 +1,6 @@
+""" This script trains a BTL classifier model. Updates and run statistics are saved to WandB,
+so in order to make full use of this script, WandB is recommended"""
+
 # Standard libraries
 import wandb
 import json
@@ -353,6 +356,7 @@ def main(config):
         json.dump(params, outfile)
     wandb.save(f'./models/params/{wandb_run_name}.json', policy="now")
     
+    
     # ***************************************
     # ******** Initialize loaders ***********
     # ***************************************
@@ -386,11 +390,9 @@ def main(config):
     kl_scale_init = float(hyper_conf['kl_scale_init'])
     kl_scale_end = float(hyper_conf['kl_scale_end'])
     kl_warmup = int(np.ceil(float(hyper_conf['kl_warmup'])*float(num_epochs)))
-    #kl_frac = (kl_scale_end/kl_scale_init)**(1/(kl_warmup-1))
     kl_div = (kl_scale_end-kl_scale_init)/(kl_warmup)
     lr_init = float(hyper_conf['lr_init'])
     lr_end = float(hyper_conf['lr_end'])
-    #lr_diff = (lr_end-lr_init)*(1/(num_epochs-kl_warmup))
     lr_frac = (lr_end/lr_init)**(1/max(1,num_epochs-kl_warmup))
     margin_fixed = ast.literal_eval(hyper_conf['margin_fixed'])
     margin_val = float(hyper_conf['margin_val'])
@@ -433,7 +435,6 @@ def main(config):
         # update loss and optimizer
         if margin_fixed:
             margin = margin_val
-            #kl_scale_factor = kl_scale_init*kl_frac**min([i,kl_warmup-1])
             kl_scale_factor = kl_scale_init+kl_div*min([i,kl_warmup])
             criterion = BayesianTripletLoss(margin=margin,
                                             varPrior=var_prior,
@@ -441,14 +442,12 @@ def main(config):
                                             var_type=var_type)
         else:
             margin = avg_neg_distance_train*margin_val
-            #kl_scale_factor = kl_scale_init*kl_frac**min([i,kl_warmup-1])
             kl_scale_factor = kl_scale_init+kl_div*min([i,kl_warmup])
             criterion = BayesianTripletLoss(margin=margin,
                                             varPrior=var_prior,
                                             kl_scale_factor=kl_scale_factor,
                                             var_type=var_type)
         lr_optim = max(lr_init*lr_frac**max(0,i+1-kl_warmup),lr_end)
-        #lr_optim = max(lr_init+(lr_diff*(max(0,i+1-kl_warmup))),lr_end)
         base_params = net.features.parameters()
         head_params = [i for i in net.parameters() if i not in base_params]
 

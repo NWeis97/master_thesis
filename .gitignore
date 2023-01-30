@@ -76,18 +76,18 @@ target/
 .ipynb_checkpoints/
 
 # exclude data from source control by default
-/data/
+# /data/
 
 # exclude logs
-/logs/
+# /logs/
 /wandb/
-/config_hpc/
+# /config_hpc/
 
 # exclude models
-/models/
+# /models/
 
 # exclude reports
-/reports/
+# /reports/
 
 # exclude init.sh file (wandb login is included)
 init.sh

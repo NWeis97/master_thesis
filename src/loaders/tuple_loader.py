@@ -22,34 +22,40 @@ logger = logging.getLogger('__main__')
 
 # Inspired on 'cnnimageretrieval-pytorch/cirtorch/datasets/traindataset.py' by 'filipradenovic'
 class TuplesDataset(data.Dataset):
-    """ Dataset that loads training and validation images for the BTL model
-    
-    Args:
-        mode (str):                              Specify 'train' or 'val' for selecting the training 
-                                                 or validation dataset.
-        nnum (int, optional):                    Number of negatives mined using the hard-negative 
-                                                 mining procedure [DEFAULT: 10].
-        qsize_class (int, optional):             Number of tuples for each class (based on anchor).
-                                                 [DEFAULT: 20].
-        npoolsize (int, optional):               Number of random samples from sample pool used in
-                                                 the negative pool [DEFAULT: 2000].         
-        poolsize_class (int, optional):          Number of samples from each class in sample pool
-                                                 [DEFAULT: 200].
-        transform (transforms, optional):        Transforms object for transforming PIL images to 
-                                                 torch.Tensor (with other tranforms) [DEFUALT: None]
-        classes_not_trained_on (list, optional): What classes should not be trained on [DEFAULT: []]
-        approx_similarity (bool, optional):      Should the approximative similarity be used to 
-                                                 extract hard-negatives? [DEFAULT: False]
+    """Dataset that loads training and validation images for the BTL model
+
+    Parameters
+    ----------
+    ``mode`` : str
+        Specify 'train' or 'val' for selecting the training or validation dataset.
+    ``nnum`` : int, optional
+        Number of negatives mined using the hard-negative mining procedure, by default 10
+    ``qsize_class`` : int, optional
+        Number of tuples for each class (based on anchor), by default 20
+    ``npoolsize`` : int, optional
+        Number of random samples from sample pool used in the negative pool, by default 2000
+    ``poolsize_class`` : int, optional
+        _description_, by default 200
+    ``transform`` : transforms, optional
+        Transforms object for transforming PIL images to torch.Tensor (with other tranforms), 
+        by default None
+    ``classes_not_trained_on`` : list, optional
+        What classes should not be trained on, by default []
+    ``approx_similarity`` : bool, optional
+        Should the approximative similarity be used to extract hard-negatives?, by default True
         
-    Attributes:
-        update_backbone_repr_pool (func): Update backbone representation of training images
-        create_epoch_tuples (func):       Create a batch of tuples (used in __getitem__)
+    Attributes
+    ----------
+    ``update_backbone_repr_pool`` : func 
+        Update backbone representation of training images
+    ``create_epoch_tuples`` : func
+        Create a batch of tuples (used in __getitem__)
     """
 
     def __init__(self, mode: str, nnum: int=10, qsize_class:int = 20, npoolsize: int = 2000,
                  poolsize_class:int = 200, transform: transforms=None,
                  classes_not_trained_on: list=[], approx_similarity: bool=True):
-
+        
         if not (mode == 'train' or mode == 'val' or mode == 'test' or mode == 'trainval'):
             raise(RuntimeError("MODE should be either train, val, test, trainval"))
 
@@ -102,13 +108,17 @@ class TuplesDataset(data.Dataset):
         self.backbone_repr = None
 
     def __getitem__(self, index: int) -> Tuple[list[Tensor], Tensor, list[str]]:
-        """_summary_
+        """Get item
 
-        Args:
-            index (int): Index
+        Parameters
+        ----------
+        ``index`` : int
+            Index
 
-        Returns:
-            Tuple[list[Tensor], Tensor, list[str]]: Tuple containing input and target for training
+        Returns
+        -------
+        ``Tuple[list[Tensor], Tensor, list[str]]``
+            Tuple containing input and target for training
         """
         
         if self.__len__() == 0:
@@ -240,17 +250,19 @@ class TuplesDataset(data.Dataset):
         return objects, bboxs, classes, class_hash
 
 
-
     def update_backbone_repr_pool(self, net: ImageClassifierNet_BayesianTripletLoss) -> None:
         """Updates pool of backbone representationd of images, which are used in 
-           create_epoch_tuples()
+        ``create_epoch_tuples()``
 
-        Args:
-            net (ImageClassifierNet_BayesianTripletLoss): Network for extracting backbone 
-                                                          reprensentations
+        Parameters
+        ----------
+        ``net`` : ImageClassifierNet_BayesianTripletLoss
+            Network for extracting backbone reprensentations
 
-        Raises:
-            MemoryError: If GPU does not have enough memory to store all backbone representations.
+        Raises
+        ------
+        ``MemoryError``
+            If GPU does not have enough memory to store all backbone representations.
         """
         
         logger.info('\n\n §§§§ Updating pool for *{}* dataset... §§§§\n'.format(self.mode))
@@ -331,31 +343,38 @@ class TuplesDataset(data.Dataset):
             self.pool_class_hash[key] = (count,count+len(self.pool_idx_to_class[key]))
             count += len(self.pool_idx_to_class[key])
         
-            
-        
+
     def create_epoch_tuples(self, net: ImageClassifierNet_BayesianTripletLoss, 
                                   num_classes_per_neg: int,
-                                  skip_closeset_neg_prob: float = 0.0) -> (Tuple[float,
+                                  skip_closeset_neg_prob: float = 0.0) -> Tuple[float,
                                                                                  Tensor,
                                                                                  Tensor,
-                                                                                 list]):
-        """ Creates a batch of tuples, which can then be extracted using the __getitem__() function.
+                                                                                 list]:
+        """Creates a batch of tuples, which can then be extracted using the __getitem__() function.
 
-        Args:
-            net (ImageClassifierNet_BayesianTripletLoss): Network for extracting embeddings.
-            num_classes_per_neg (int): Number of negatives per class per tuple.
-            skip_closeset_neg_prob (float, optional): Skip hard negative probability [DEFAULT: 0.0].
+        Parameters
+        ----------
+        ``net`` : ImageClassifierNet_BayesianTripletLoss
+            Network for extracting embeddings.
+        ``num_classes_per_neg`` : int
+            Number of negatives per class per tuple.
+        ``skip_closeset_neg_prob`` : float, optional
+            Skip hard negative probability, by default 0.0
 
-        Raises:
-            RuntimeError: If 'skip_closeset_neg_prob' is too high, it will sometimes take too long 
-                          to construct tuples. After a certain amount of re-tries, the algorithm 
-                          terminates if tuples has not been created.
+        Returns
+        -------
+        ``Tuple[float, Tensor, Tensor, list]``
+            (Average distance to hard-negative,
+            Means of queries (anchors), 
+            Variances of queries (anchors),
+            List of classes of queries (anchors))
 
-        Returns:
-            Tuple[float, Tensor, Tensor, list]: 1 - Average distance to hard-negative
-                                                2 - Means of queries (anchors)
-                                                3 - Variances of queries (anchors)
-                                                4 - List of classes of queries (anchors)
+        Raises
+        ------
+        ``RuntimeError``
+            If ``skip_closeset_neg_prob``is too high, it will sometimes take too long to construct 
+            tuples. After a certain amount of re-tries, the algorithm terminates if tuples has not 
+            been created.
         """
         
         logger.info('\n>> Creating tuples for *{}* dataset...'.format(self.mode))

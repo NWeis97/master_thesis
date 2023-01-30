@@ -1,3 +1,5 @@
+""" This script contains helper functions for the test_*.py scripts """
+
 # Imports
 import numpy as np
 import torch
