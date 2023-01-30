@@ -1,4 +1,4 @@
-""" This script contains helper functions for the train_*.py scripts """
+""" This script contains helper functions for the training_test/train_*.py scripts """
 
 # Imports
 import shortuuid
